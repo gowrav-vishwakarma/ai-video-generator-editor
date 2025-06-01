@@ -3,14 +3,8 @@
 
 # main_script.py
 import os
-import sys
-
-# Add parent directory to path to import from influencer package
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Import and configure memory management
-from influencer.utils.memory_config import configure_memory_management
-configure_memory_management()
+# Set PyTorch memory management
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
 import json

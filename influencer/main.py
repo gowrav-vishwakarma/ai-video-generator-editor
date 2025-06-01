@@ -1,6 +1,7 @@
 import os
-# Set PyTorch memory management
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# Import and configure memory management
+from influencer.utils.memory_config import configure_memory_management
+configure_memory_management()
 
 import sys
 import importlib.util

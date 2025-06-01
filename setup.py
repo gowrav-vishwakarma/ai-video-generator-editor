@@ -3,7 +3,10 @@ from setuptools import setup, find_packages
 setup(
     name="influencer",
     version="0.1.0",
-    packages=find_packages(),
+    packages=find_packages() + ['diffusers_helper'],
+    package_data={
+        'diffusers_helper': ['**/*.py'],
+    },
     install_requires=[
         "torch>=2.0.0",
         "transformers>=4.30.0",

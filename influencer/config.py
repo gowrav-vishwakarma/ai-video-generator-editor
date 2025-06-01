@@ -2,6 +2,14 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict, Any
 
+# Maximum video length constants for different models (in seconds)
+MAX_VIDEO_LENGTH = {
+    "img2vid": 16.0,  # Increased from 4.0 to allow longer segments like v3
+    "text2vid": 4.0,  
+    "framepack": 15.0,  
+    "default": 16.0    # Increased default too
+}
+
 @dataclass
 class ContentConfig:
     """Configuration for content generation with model selection options"""
@@ -48,16 +56,18 @@ class ContentConfig:
     # For img2vid mode:
     img2vid_model: str = "stabilityai/stable-video-diffusion-img2vid-xt"  # I2V model
     img2vid_model_params: Dict[str, Any] = field(default_factory=lambda: {
-        "decode_chunk_size": 4,
+        "decode_chunk_size": 4,  # Reduced from 8 to 4 for better memory usage
         "motion_bucket_id": 127,
         "noise_aug_strength": 0.02
+        # Removed num_inference_steps to match v3 behavior
     })
     img2vid_model_implementation: Optional[str] = None  # Custom implementation file path
     
     # For text2vid mode:
     text2vid_model: str = "damo-vilab/text-to-video-ms-1.7b"  # T2V model
     text2vid_model_params: Dict[str, Any] = field(default_factory=lambda: {
-        "num_inference_steps": 25
+        "num_inference_steps": 25,  # Matched with v3 version
+        "num_frames": 16  # Limited to prevent OOM
     })
     text2vid_model_implementation: Optional[str] = None  # Custom implementation file path
     

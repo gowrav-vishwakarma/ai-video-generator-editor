@@ -28,6 +28,7 @@ from moviepy.video.fx.Crop import Crop # Correct import based on your docs
 import gc # Garbage collection
 import numpy as np
 import time # For unique filenames if needed, and timing
+import re
 
 # --- 0. CONFIGURATION ---
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -167,7 +168,6 @@ def generate_script_from_llm(topic: str, model, tokenizer, config: ContentConfig
     decoded_output = tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
     print("LLM Response:\n", decoded_output)
     
-    import re
     match = re.search(r'\{[\s\S]*\}', decoded_output) # More robust regex for finding first { to last }
     
     if match:
@@ -178,7 +178,36 @@ def generate_script_from_llm(topic: str, model, tokenizer, config: ContentConfig
         print(f"Could not extract a clear JSON block, attempting to parse full output.")
 
     try:
+        # Clean the JSON string before parsing
+        # Remove trailing commas in objects and arrays
+        json_text_to_parse = re.sub(r',(\s*[}\]])', r'\1', json_text_to_parse)
+        # Remove any trailing commas at the end of arrays
+        json_text_to_parse = re.sub(r',(\s*])', r'\1', json_text_to_parse)
+        # Remove any trailing commas at the end of objects
+        json_text_to_parse = re.sub(r',(\s*})', r'\1', json_text_to_parse)
+        
+        # First attempt to parse the JSON
         response_data = json.loads(json_text_to_parse)
+        
+        # Validate the structure
+        if not isinstance(response_data, dict):
+            raise ValueError("Response is not a dictionary")
+            
+        if "narration" not in response_data or "visuals" not in response_data or "hashtags" not in response_data:
+            raise ValueError("Missing required keys in response")
+            
+        if not isinstance(response_data["narration"], list) or not isinstance(response_data["visuals"], list):
+            raise ValueError("Narration and visuals must be lists")
+            
+        # Ensure each narration and visual has required fields
+        for item in response_data["narration"]:
+            if not all(k in item for k in ["scene", "text", "duration_estimate"]):
+                raise ValueError("Narration items missing required fields")
+                
+        for item in response_data["visuals"]:
+            if not all(k in item for k in ["scene", "prompt"]):
+                raise ValueError("Visual items missing required fields")
+        
         narration_data = sorted(response_data.get("narration", []), key=lambda x: x["scene"])
         visuals_data = sorted(response_data.get("visuals", []), key=lambda x: x["scene"])
         
@@ -192,8 +221,10 @@ def generate_script_from_llm(topic: str, model, tokenizer, config: ContentConfig
             raise ValueError(f"Scene count {len(narration_scenes)} outside range [{config.min_scenes}, {config.max_scenes}].")
             
         return narration_scenes, visual_prompts, hashtags
+        
     except (json.JSONDecodeError, ValueError, KeyError) as e:
         print(f"Error parsing LLM response: {e}. Using fallback content.")
+        # Create a more robust fallback that matches the expected structure
         fallback_duration = config.max_scene_narration_duration_hint
         narration_scenes = [
             {"text": f"An introduction to {topic}.", "duration_estimate": fallback_duration},
@@ -344,6 +375,7 @@ def generate_direct_video_chunk(
 
 def generate_chunk_specific_visual_prompts(
     scene_narration: str,
+    original_scene_prompt: str,  # Add original scene prompt parameter
     num_chunks: int,
     model,
     tokenizer,
@@ -351,6 +383,9 @@ def generate_chunk_specific_visual_prompts(
 ) -> List[str]:
     """
     Generate specific visual prompts for each chunk of a scene based on its position in the narration.
+    Each prompt is kept under 77 tokens and focused on key visual elements for a 2-3 second clip.
+    Uses previous chunk's prompt as context for better visual continuity.
+    Maintains consistency with the original scene's visual style and theme.
     """
     print(f"Generating {num_chunks} chunk-specific visual prompts for scene narration...")
     
@@ -364,13 +399,18 @@ def generate_chunk_specific_visual_prompts(
         chunk_end = min((chunk_idx + 1) * config.model_max_video_chunk_duration, 
                        len(scene_narration.split()) * 0.3)  # Rough estimate: 0.3s per word
         
+        # Get previous chunk's prompt for context (if available)
+        previous_prompt = chunk_prompts[-1] if chunk_prompts else None
+        
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are an AI assistant creating a visual prompt for a specific chunk of a video. "
-                    "Your task is to create a detailed visual prompt that captures the essence of the narration "
-                    "for this specific time segment."
+                    "You are an AI assistant creating concise visual prompts for 2-3 second video chunks. "
+                    "Your task is to create a short, focused prompt that captures the key visual elements "
+                    "for this specific time segment while maintaining consistency with the original scene's style and theme. "
+                    "Keep prompts under 77 tokens and focus on what can be visually shown in 2-3 seconds. "
+                    "Ensure visual continuity with both the previous chunk and the original scene's style."
                 )
             },
             {
@@ -378,16 +418,29 @@ def generate_chunk_specific_visual_prompts(
                 "content": f"""
                 Given this narration: "{scene_narration}"
                 
-                Create a detailed visual prompt for chunk {chunk_idx + 1} of {num_chunks}.
+                Original scene visual prompt: "{original_scene_prompt}"
+                
+                Create a concise visual prompt for chunk {chunk_idx + 1} of {num_chunks}.
                 This chunk represents approximately {chunk_start:.1f}s to {chunk_end:.1f}s of the narration.
+                
+                {f'Previous chunk showed: "{previous_prompt}"' if previous_prompt else 'This is the first chunk of the scene.'}
                 
                 Return your response in this exact JSON format:
                 {{
-                    "prompt": "Detailed visual prompt focusing on the specific part of the narration for this chunk"
+                    "prompt": "A short, focused visual prompt (max 77 tokens) for this 2-3 second chunk"
                 }}
                 
-                The prompt should be detailed and suitable for image/video generation models.
-                Focus on the specific part of the narration that would be shown during this chunk's timing.
+                Guidelines:
+                - Keep the prompt under 77 tokens
+                - Focus on key visual elements that can be shown in 2-3 seconds
+                - Use simple, clear descriptions
+                - Avoid complex actions or transitions
+                - Focus on the main subject and its immediate surroundings
+                - Use descriptive adjectives sparingly
+                - Ensure visual continuity with the previous chunk
+                - Maintain consistency with the original scene's style and theme
+                - If this is not the first chunk, make sure the scene flows naturally from the previous chunk
+                - Preserve the visual style (e.g., cinematic, realistic, anime) from the original scene prompt
                 """
             }
         ]
@@ -395,7 +448,7 @@ def generate_chunk_specific_visual_prompts(
         try:
             tokenized_chat = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(model.device)
             generation_kwargs = {
-                "input_ids": tokenized_chat, "max_new_tokens": 512, "do_sample": True,
+                "input_ids": tokenized_chat, "max_new_tokens": 256, "do_sample": True,
                 "top_k": 50, "top_p": 0.95, "temperature": 0.7, "pad_token_id": tokenizer.eos_token_id
             }
 
@@ -420,37 +473,53 @@ def generate_chunk_specific_visual_prompts(
                 response_data = json.loads(json_text_to_parse)
                 prompt = response_data.get("prompt")
                 if prompt:
+                    # Verify token count
+                    tokens = tokenizer.encode(prompt)
+                    if len(tokens) > 77:
+                        print(f"Warning: Prompt exceeds 77 tokens ({len(tokens)}). Truncating...")
+                        # Truncate to 77 tokens and decode back
+                        prompt = tokenizer.decode(tokens[:77])
+                    
                     chunk_prompts.append(prompt)
-                    print(f"Successfully generated prompt for chunk {chunk_idx + 1}")
+                    print(f"Successfully generated prompt for chunk {chunk_idx + 1} ({len(tokens)} tokens)")
                 else:
                     raise ValueError("No prompt found in response")
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 print(f"Error parsing LLM response for chunk {chunk_idx + 1}: {e}")
-                # Create a fallback prompt for this specific chunk
+                # Create a concise fallback prompt that maintains consistency with original scene
                 if chunk_idx == 0:
-                    prompt = f"Visual representation of the beginning of the scene: {scene_narration[:50]}..."
+                    prompt = f"Opening shot of {original_scene_prompt.split()[0]} in the style of the original scene"
                 elif chunk_idx == num_chunks - 1:
-                    prompt = f"Visual representation of the conclusion of the scene: {scene_narration[-50:]}..."
+                    prompt = f"Final shot of {original_scene_prompt.split()[0]} maintaining visual consistency"
                 else:
-                    prompt = f"Visual representation of part {chunk_idx + 1} of {num_chunks} of the scene: {scene_narration[:50]}..."
+                    # Use previous prompt as context for fallback
+                    if previous_prompt:
+                        prompt = f"Continuation of previous scene, maintaining visual style"
+                    else:
+                        prompt = f"Mid-scene shot of {original_scene_prompt.split()[0]} in consistent style"
                 chunk_prompts.append(prompt)
                 print(f"Using fallback prompt for chunk {chunk_idx + 1}")
                 
         except Exception as e:
             print(f"Error generating prompt for chunk {chunk_idx + 1}: {e}")
-            # Create a fallback prompt for this specific chunk
+            # Create a concise fallback prompt that maintains consistency with original scene
             if chunk_idx == 0:
-                prompt = f"Visual representation of the beginning of the scene: {scene_narration[:50]}..."
+                prompt = f"Opening shot of {original_scene_prompt.split()[0]} in the style of the original scene"
             elif chunk_idx == num_chunks - 1:
-                prompt = f"Visual representation of the conclusion of the scene: {scene_narration[-50:]}..."
+                prompt = f"Final shot of {original_scene_prompt.split()[0]} maintaining visual consistency"
             else:
-                prompt = f"Visual representation of part {chunk_idx + 1} of {num_chunks} of the scene: {scene_narration[:50]}..."
+                # Use previous prompt as context for fallback
+                if previous_prompt:
+                    prompt = f"Continuation of previous scene, maintaining visual style"
+                else:
+                    prompt = f"Mid-scene shot of {original_scene_prompt.split()[0]} in consistent style"
             chunk_prompts.append(prompt)
             print(f"Using fallback prompt for chunk {chunk_idx + 1}")
 
     print("\nFinal chunk prompts:")
     for i, prompt in enumerate(chunk_prompts):
-        print(f"\nChunk {i + 1}:")
+        tokens = tokenizer.encode(prompt)
+        print(f"\nChunk {i + 1} ({len(tokens)} tokens):")
         print(prompt)
     
     return chunk_prompts
@@ -521,7 +590,7 @@ def main_automation_flow(topic: str, config: ContentConfig, speaker_reference_au
             # Load LLM for chunk-specific prompts
             llm_model, llm_tokenizer = load_llm()
             chunk_specific_prompts = generate_chunk_specific_visual_prompts(
-                narration_text, num_video_chunks, llm_model, llm_tokenizer, config
+                narration_text, visual_prompt_for_scene, num_video_chunks, llm_model, llm_tokenizer, config
             )
             # Clear LLM after generating chunk prompts
             clear_vram(llm_model, llm_tokenizer)
@@ -656,7 +725,7 @@ if __name__ == "__main__":
 
 
     # reel_topic = "The future of renewable energy sources"
-    reel_topic = "A fat cat saw a dress with she can't wear due to its obesity. and then she does gym and in last wear the dress."
+    reel_topic = "A cat's transformation journey: From chonky to fit, showing how a lazy cat gets motivated to exercise and achieve their fitness goals, ending with them confidently wearing their dream outfit"
     # reel_topic = "An 80 years old person guiding young generation."
     
     start_time = time.time()

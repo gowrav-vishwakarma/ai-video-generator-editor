@@ -220,7 +220,7 @@ if __name__ == "__main__":
         max_scenes=4, # Keep it small for testing
         use_svd_flow=True, # True: SDXL -> SVD; False: Zeroscope T2V
         fps=10, # SVD is often trained at lower FPS like 7, then upsample or export at higher
-        generation_resolution=(576, 320), # For Zeroscope 576w or SVD XT (can be 1024x576)
+        generation_resolution=(1024, 576), # Optimal for SDXL and SVD-XT (16:9)
         final_output_resolution=(1280, 720), # e.g., 720p for faster final assembly
         output_dir="modular_reels_output",
         font_for_subtitles="Arial" # Make sure this font is available or provide path to .ttf

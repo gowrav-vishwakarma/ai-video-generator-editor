@@ -243,21 +243,36 @@ def assemble_final_reel(
             video_clip_with_audio = video_clip_timed.with_audio(final_audio_for_scene)
 
             # 6. Add text caption
-            # Add text caption
+            # Calculate font size based on video height (e.g., 5% of height)
+            base_font_size = int(config.final_output_resolution[1] * 0.05)  # 5% of height
+            # Ensure font size is within reasonable bounds
+            font_size = max(40, min(base_font_size, 60))  # Between 40 and 60
+
+            # Calculate text width based on video width (80% of width)
+            text_width = int(config.final_output_resolution[0] * 0.8)
+
+            # Calculate vertical position based on aspect ratio
+            # For taller videos (like reels), position text higher
+            aspect_ratio = config.final_output_resolution[0] / config.final_output_resolution[1]
+            if aspect_ratio < 1:  # Portrait (like reels)
+                vertical_position = 0.7  # Position higher for portrait
+            else:  # Landscape (like YouTube)
+                vertical_position = 0.75  # Original position for landscape
+
             text_clip_for_scene = TextClip(
                 font_path_for_textclip,
                 text=narration_text,
-                font_size=60,
+                font_size=font_size,
                 color='white',
                 stroke_color='black',
                 stroke_width=2,
                 method='caption',
-                size=(int(config.final_output_resolution[0]*0.8), None)
+                size=(text_width, None)
             )
             all_clips_to_close.append(text_clip_for_scene)
 
-            # Use with_duration as per your old code for TextClip
-            text_clip_final = text_clip_for_scene.with_position(('center', 0.8), relative=True).with_duration(actual_audio_duration)
+            # Position text based on calculated vertical position
+            text_clip_final = text_clip_for_scene.with_position(('center', vertical_position), relative=True).with_duration(actual_audio_duration)
 
             # 7. Combine video and text into final scene composite
             scene_composite = CompositeVideoClip(

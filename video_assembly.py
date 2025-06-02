@@ -6,7 +6,7 @@ from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips, TextCl
 from moviepy.audio.AudioClip import concatenate_audioclips, AudioClip
 from moviepy.video.VideoClip import ColorClip
 
-from config import ContentConfig 
+from config_manager import ContentConfig 
 
 
 # --- 5. VIDEO ASSEMBLY ---
@@ -175,27 +175,27 @@ def assemble_final_reel(
             # Resize, Crop, Position, THEN Time, then Audio.
 
             # 1. Resize video to target height
-            temp_video_clip = video_clip_for_scene.resized(height=config.target_resolution[1])
+            temp_video_clip = video_clip_for_scene.resized(height=config.final_output_resolution[1])
 
             # 2. Crop if wider than target width, or pad if narrower
-            if temp_video_clip.w > config.target_resolution[0]:
+            if temp_video_clip.w > config.final_output_resolution[0]:
                 # Using .cropped() as per your working old code
                 temp_video_clip = temp_video_clip.cropped(x_center=temp_video_clip.w / 2,
-                                                          width=config.target_resolution[0])
-            elif temp_video_clip.w < config.target_resolution[0]:
+                                                          width=config.final_output_resolution[0])
+            elif temp_video_clip.w < config.final_output_resolution[0]:
                 # Pad with a background
-                background_clip_for_scene = ColorClip(size=config.target_resolution,
+                background_clip_for_scene = ColorClip(size=config.final_output_resolution,
                                            color=(0,0,0), # Black background
                                            duration=actual_audio_duration) # Duration for background
                 all_clips_to_close.append(background_clip_for_scene)
                 # Composite video onto background
                 temp_video_clip = CompositeVideoClip([background_clip_for_scene, temp_video_clip.with_position('center')],
-                                                     size=config.target_resolution)
+                                                     size=config.final_output_resolution)
             
             # 3. Position video in center (if not already handled by padding composite)
             # The .with_position('center') might have been applied already if padded.
             # If not padded, apply it now.
-            if not (video_clip_for_scene.w < config.target_resolution[0] and temp_video_clip.w == config.target_resolution[0]):
+            if not (video_clip_for_scene.w < config.final_output_resolution[0] and temp_video_clip.w == config.final_output_resolution[0]):
                  temp_video_clip = temp_video_clip.with_position('center')
 
             # 4. Handle duration mismatches for the video
@@ -243,26 +243,41 @@ def assemble_final_reel(
             video_clip_with_audio = video_clip_timed.with_audio(final_audio_for_scene)
 
             # 6. Add text caption
-            # Add text caption
+            # Calculate font size based on video height (e.g., 5% of height)
+            base_font_size = int(config.final_output_resolution[1] * 0.05)  # 5% of height
+            # Ensure font size is within reasonable bounds
+            font_size = max(40, min(base_font_size, 60))  # Between 40 and 60
+
+            # Calculate text width based on video width (80% of width)
+            text_width = int(config.final_output_resolution[0] * 0.8)
+
+            # Calculate vertical position based on aspect ratio
+            # For taller videos (like reels), position text higher
+            aspect_ratio = config.final_output_resolution[0] / config.final_output_resolution[1]
+            if aspect_ratio < 1:  # Portrait (like reels)
+                vertical_position = 0.7  # Position higher for portrait
+            else:  # Landscape (like YouTube)
+                vertical_position = 0.75  # Original position for landscape
+
             text_clip_for_scene = TextClip(
                 font_path_for_textclip,
                 text=narration_text,
-                font_size=60,
+                font_size=font_size,
                 color='white',
                 stroke_color='black',
                 stroke_width=2,
                 method='caption',
-                size=(int(config.target_resolution[0]*0.8), None)
+                size=(text_width, None)
             )
             all_clips_to_close.append(text_clip_for_scene)
 
-            # Use with_duration as per your old code for TextClip
-            text_clip_final = text_clip_for_scene.with_position(('center', 0.8), relative=True).with_duration(actual_audio_duration)
+            # Position text based on calculated vertical position
+            text_clip_final = text_clip_for_scene.with_position(('center', vertical_position), relative=True).with_duration(actual_audio_duration)
 
             # 7. Combine video and text into final scene composite
             scene_composite = CompositeVideoClip(
                 [video_clip_with_audio, text_clip_final],
-                size=config.target_resolution # Ensure composite is target size
+                size=config.final_output_resolution # Ensure composite is target size
             )
             final_scene_video_clips.append(scene_composite)
 

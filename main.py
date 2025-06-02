@@ -102,7 +102,7 @@ def main_automation_flow(
                     current_chunk_target_duration = actual_audio_duration - current_scene_audio_covered_duration
                 current_chunk_target_duration = max(0.5, current_chunk_target_duration)
 
-                sub_clip_visual_prompt = chunk_specific_prompts[chunk_idx]
+                visual_prompt, motion_prompt = chunk_specific_prompts[chunk_idx]  # Unpack both prompts
                 sub_clip_path = None
                 num_frames_for_chunk = max(i2v_cfg.svd_min_frames if content_cfg.use_svd_flow else 8, 
                                            int(current_chunk_target_duration * content_cfg.fps))
@@ -114,7 +114,7 @@ def main_automation_flow(
                     keyframe_image_path = os.path.join(content_cfg.output_dir, keyframe_image_filename)
                     
                     t2i_module.generate_image(
-                        sub_clip_visual_prompt, keyframe_image_path, 
+                        visual_prompt, keyframe_image_path, 
                         gen_width, gen_height, t2i_cfg
                     )
                     # T2I model loaded/cleared within its module per call if not managed globally
@@ -126,14 +126,15 @@ def main_automation_flow(
                     sub_clip_path = i2v_module.generate_video_from_image(
                         keyframe_image_path, video_chunk_path,
                         num_frames_for_chunk, content_cfg.fps,
-                        gen_width, gen_height, i2v_cfg
+                        gen_width, gen_height, i2v_cfg,
+                        motion_prompt=motion_prompt  # Pass the motion prompt
                     )
                     # I2V model loaded/cleared within its module per call
                 else: # Direct T2V
                     video_chunk_filename = f"scene_{i}_chunk_{chunk_idx}_t2v.mp4"
                     video_chunk_path = os.path.join(content_cfg.output_dir, video_chunk_filename)
                     sub_clip_path = t2v_module.generate_video_from_text(
-                        sub_clip_visual_prompt, video_chunk_path,
+                        visual_prompt, video_chunk_path,
                         num_frames_for_chunk, content_cfg.fps,
                         gen_width, gen_height, t2v_cfg
                     )
@@ -220,8 +221,10 @@ if __name__ == "__main__":
         max_scenes=4, # Keep it small for testing
         use_svd_flow=True, # True: SDXL -> SVD; False: Zeroscope T2V
         fps=10, # SVD is often trained at lower FPS like 7, then upsample or export at higher
-        generation_resolution=(1024, 576), # Optimal for SDXL and SVD-XT (16:9)
-        final_output_resolution=(1280, 720), # e.g., 720p for faster final assembly
+        # generation_resolution=(1024, 576), # Optimal for SDXL and SVD-XT (16:9)
+        # final_output_resolution=(1280, 720), # e.g., 720p for faster final assembly
+        generation_resolution=(576, 1024), # Optimal for SDXL and SVD-XT (9:16 for reels)
+        final_output_resolution=(1080, 1920), # Instagram reels standard resolution
         output_dir="modular_reels_output",
         font_for_subtitles="Arial" # Make sure this font is available or provide path to .ttf
     )
@@ -251,7 +254,7 @@ if __name__ == "__main__":
         print(f"Warning: Speaker ref audio '{speaker_audio_sample}' not found. XTTS uses default voice.")
         speaker_audio_sample = None
     
-    reel_topic = "The beauty of nature in the rain"
+    reel_topic = "it can be funny if you are a cat, human thinking like cats."
     # reel_topic = "explaining quantum entanglement simply"
     
     start_time = time.time()

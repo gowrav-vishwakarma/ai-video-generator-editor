@@ -177,7 +177,7 @@ def generate_chunk_visual_prompts(
     num_chunks: int,
     content_config: ContentConfig,
     llm_config: LLMConfig
-) -> List[str]:
+) -> List[Tuple[str, str]]:  # Now returns tuple of (visual_prompt, motion_prompt)
     model, tokenizer = load_model_and_tokenizer(llm_config) # Ensures model is loaded
     print(f"Generating {num_chunks} chunk-specific visual prompts for scene...")
     
@@ -195,17 +195,20 @@ def generate_chunk_visual_prompts(
         end_word_idx = int((chunk_idx + 1) * words_per_chunk_ideal)
         current_narration_segment = " ".join(narration_words[start_word_idx:end_word_idx])
 
-
-        previous_prompt_context = f'Previous chunk showed: "{chunk_prompts[-1]}"' if chunk_prompts else 'This is the first chunk of the scene.'
+        previous_prompt_context = f'Previous chunk showed: "{chunk_prompts[-1][0]}"' if chunk_prompts else 'This is the first chunk of the scene.'
 
         messages = [
             {
                 "role": "system",
                 "content": (
                     "You are an AI assistant creating concise visual prompts for short video chunks (around 2-3 seconds). "
-                    "Focus on key visual elements for this specific time segment, maintaining consistency with the original scene's style and theme. "
-                    "Keep prompts under 77 tokens. Ensure visual continuity with the previous chunk and original style."
-                    "Respond in JSON: {\"prompt\": \"your_visual_prompt\"}"
+                    "Make sure to keep it stick to the original topic, scene prompt, elements, characters and envioroment."
+                    "Always pass the style and the mood of the original scene prompt to your response as it will be seen in isolation and still we want to keep the style and the mood of the original scene prompt."
+                    "For each chunk, you need to generate TWO prompts:\n"
+                    "1. A visual prompt describing what to show (for image generation)\n"
+                    "2. A motion prompt describing how the scene should move/transition (for video generation)\n"
+                    "Keep both prompts under 77 tokens. Ensure visual continuity with the previous chunk and original style."
+                    "Respond in JSON: {\"visual_prompt\": \"your_visual_prompt\", \"motion_prompt\": \"your_motion_prompt\"}"
                 )
             },
             {
@@ -216,10 +219,14 @@ def generate_chunk_visual_prompts(
                 This specific chunk ({chunk_idx + 1}/{num_chunks}) should visually represent: "{current_narration_segment if current_narration_segment else 'a continuation or a general aspect of the scene'}"
                 {previous_prompt_context}
                 
-                Generate a concise visual prompt for this chunk.
+                Generate TWO concise prompts for this chunk:
+                1. A visual prompt describing what to show (for image generation)
+                2. A motion prompt describing how the scene should move/transition (for video generation)
+                
                 Return your response in this exact JSON format:
                 {{
-                    "prompt": "A short, focused visual prompt (max 77 tokens) for this 2-3 second chunk, consistent with original style and previous chunk."
+                    "visual_prompt": "A short, focused visual prompt (max 77 tokens) for this 2-3 second chunk, consistent with original style and previous chunk.",
+                    "motion_prompt": "A short description of how the scene should move or transition (max 77 tokens), e.g., 'slow pan left', 'zoom in', 'smooth transition', etc."
                 }}
                 """
             }
@@ -235,25 +242,27 @@ def generate_chunk_visual_prompts(
         
         response_data = _parse_llm_json_response(decoded_output, f"chunk {chunk_idx+1} prompt")
         
-        prompt_text = None
-        if response_data and "prompt" in response_data:
-            prompt_text = response_data["prompt"]
-            # Token check (optional, as models often handle this)
-            # tokens = tokenizer.encode(prompt_text)
-            # if len(tokens) > 77:
-            #     print(f"Warning: Chunk prompt for {chunk_idx+1} too long ({len(tokens)} tokens), may be truncated by video model.")
+        visual_prompt = None
+        motion_prompt = None
+        if response_data and "visual_prompt" in response_data and "motion_prompt" in response_data:
+            visual_prompt = response_data["visual_prompt"]
+            motion_prompt = response_data["motion_prompt"]
         
-        if not prompt_text:
-            print(f"Using fallback prompt for chunk {chunk_idx + 1}")
+        if not visual_prompt or not motion_prompt:
+            print(f"Using fallback prompts for chunk {chunk_idx + 1}")
             if chunk_prompts: # If there's a previous prompt, try to make it a continuation
-                 prompt_text = f"Continuing the scene: {original_scene_prompt[:50]}, focusing on '{current_narration_segment[:30]}...'"
+                 visual_prompt = f"Continuing the scene: {original_scene_prompt[:50]}, focusing on '{current_narration_segment[:30]}...'"
+                 motion_prompt = "Smooth continuation of the scene with subtle movement"
             else: # First chunk or isolated fallback
-                 prompt_text = f"{original_scene_prompt[:60]}, segment {chunk_idx+1} focusing on '{current_narration_segment[:30]}...'"
+                 visual_prompt = f"{original_scene_prompt[:60]}, segment {chunk_idx+1} focusing on '{current_narration_segment[:30]}...'"
+                 motion_prompt = "Gentle camera movement to establish the scene"
             # Ensure it's not overly long
-            prompt_text = (prompt_text[:150] + '...') if len(prompt_text) > 150 else prompt_text
+            visual_prompt = (visual_prompt[:150] + '...') if len(visual_prompt) > 150 else visual_prompt
+            motion_prompt = (motion_prompt[:150] + '...') if len(motion_prompt) > 150 else motion_prompt
 
-
-        chunk_prompts.append(prompt_text)
-        print(f"Generated prompt for chunk {chunk_idx + 1}: \"{prompt_text[:60]}...\"")
+        chunk_prompts.append((visual_prompt, motion_prompt))
+        print(f"Generated prompts for chunk {chunk_idx + 1}:")
+        print(f"  Visual: \"{visual_prompt[:60]}...\"")
+        print(f"  Motion: \"{motion_prompt[:60]}...\"")
 
     return chunk_prompts

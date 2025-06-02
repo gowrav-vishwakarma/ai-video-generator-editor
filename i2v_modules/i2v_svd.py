@@ -53,7 +53,8 @@ def generate_video_from_image(
     fps: int,
     width: int, 
     height: int, 
-    i2v_config: I2VConfig # Contains model_native_frames
+    i2v_config: I2VConfig, # Contains model_native_frames
+    motion_prompt: str = None # New parameter for motion guidance
 ) -> str:
     pipe = load_pipeline(i2v_config)
     print(f"I2V (SVD): Requested {requested_num_frames} frames. Model will generate {i2v_config.model_native_frames} frames.")
@@ -70,12 +71,25 @@ def generate_video_from_image(
     # The actual number of frames generated will be model_native_frames.
     
     print(f"  Generating video from image: {image_path} (SVD will produce {frames_to_generate_by_model} frames)")
+    if motion_prompt:
+        print(f"  Using motion prompt: {motion_prompt}")
+
+    # Adjust motion_bucket_id based on motion prompt if provided
+    motion_bucket_id = i2v_config.motion_bucket_id
+    if motion_prompt:
+        # Simple heuristic to adjust motion based on prompt keywords
+        motion_prompt_lower = motion_prompt.lower()
+        if any(word in motion_prompt_lower for word in ['fast', 'quick', 'rapid', 'dynamic']):
+            motion_bucket_id = min(255, motion_bucket_id + 50)  # Increase motion
+        elif any(word in motion_prompt_lower for word in ['slow', 'gentle', 'subtle', 'smooth']):
+            motion_bucket_id = max(0, motion_bucket_id - 50)  # Decrease motion
+        print(f"  Adjusted motion_bucket_id to {motion_bucket_id} based on prompt")
 
     video_frames_list = pipe( # SVD returns a list containing one tensor of frames
         input_image,
         decode_chunk_size=i2v_config.decode_chunk_size,
         num_frames=frames_to_generate_by_model, # Tell SVD to generate its standard output
-        motion_bucket_id=i2v_config.motion_bucket_id,
+        motion_bucket_id=motion_bucket_id,
         fps=7, # SVD (XT) is often trained with input images at 7 FPS for motion estimation. This is NOT the output FPS.
         noise_aug_strength=i2v_config.noise_aug_strength,
         height=height, 

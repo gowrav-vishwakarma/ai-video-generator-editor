@@ -13,6 +13,22 @@ The system breaks down video generation into discrete tasks:
 5. Scene Assembly: Combines chunks into complete scenes
 6. Final Assembly: Combines all scenes into the final video
 
+Status Definitions:
+- "pending": Initial state, needs to be processed
+- "in_progress": Currently being processed
+- "completed": Successfully processed and ready for next stage
+- "failed": Processing failed, needs retry
+- "generated": Final state for chunks and final video
+- "image_generated": Intermediate state for chunks (keyframe generated)
+- "video_generated": Final state for chunks (video generated)
+
+Valid Status Transitions:
+1. Script Parts: pending -> generated
+2. Visual Prompts: pending -> generated
+3. Scenes: pending -> in_progress -> completed
+4. Chunks: pending -> image_generated -> video_generated
+5. Final Video: pending -> generated
+
 The ProjectManager maintains a project.json file that tracks:
 - Project metadata and configuration
 - Script content (narration parts and visual prompts)
@@ -29,9 +45,53 @@ Key Features:
 import os
 import json
 import time
+import logging
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Any, Tuple
 from config_manager import ContentConfig
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Status validation
+VALID_STATUSES = {
+    "script": ["pending", "generated"],
+    "visual_prompt": ["pending", "generated"],
+    "scene": ["pending", "in_progress", "completed", "failed"],
+    "chunk": ["pending", "image_generated", "video_generated", "failed"],
+    "final_video": ["pending", "generated", "failed"]
+}
+
+# Define final statuses for each component type
+FINAL_STATUSES = {
+    "script": "generated",
+    "visual_prompt": "generated",
+    "scene": "completed",
+    "chunk": "video_generated",
+    "final_video": "generated"
+}
+
+VALID_STATUS_TRANSITIONS = {
+    "script": {"pending": ["generated"]},
+    "visual_prompt": {"pending": ["generated"]},
+    "scene": {
+        "pending": ["in_progress", "failed"],
+        "in_progress": ["completed", "failed"],
+        "completed": ["pending", "failed"],
+        "failed": ["pending"]
+    },
+    "chunk": {
+        "pending": ["image_generated", "failed"],
+        "image_generated": ["video_generated", "failed"],
+        "video_generated": ["pending", "failed"],
+        "failed": ["pending"]
+    },
+    "final_video": {
+        "pending": ["generated", "failed"],
+        "generated": ["pending", "failed"],
+        "failed": ["pending"]
+    }
+}
 
 @dataclass
 class ProjectState:
@@ -73,6 +133,69 @@ class ProjectManager:
         self.project_file = os.path.join(output_dir, "project.json")
         self.state: Optional[ProjectState] = None
         
+    def _is_final_status(self, component_type: str, status: str) -> bool:
+        """
+        Check if a status is the final status for a component type.
+        
+        Args:
+            component_type (str): Type of component
+            status (str): Status to check
+            
+        Returns:
+            bool: True if status is final, False otherwise
+        """
+        return status == FINAL_STATUSES.get(component_type)
+        
+    def _validate_status_transition(self, component_type: str, old_status: str, new_status: str) -> bool:
+        """
+        Validate if a status transition is allowed.
+        
+        Args:
+            component_type (str): Type of component (script, visual_prompt, scene, chunk, final_video)
+            old_status (str): Current status
+            new_status (str): New status to transition to
+            
+        Returns:
+            bool: True if transition is valid, False otherwise
+        """
+        # If new status is final, always allow it
+        if self._is_final_status(component_type, new_status):
+            return True
+            
+        # If old status is final and new status is not, always allow it (regeneration)
+        if self._is_final_status(component_type, old_status):
+            return True
+            
+        # For non-final statuses, validate against transitions
+        if component_type not in VALID_STATUS_TRANSITIONS:
+            logger.error(f"Invalid component type: {component_type}")
+            return False
+            
+        if old_status not in VALID_STATUS_TRANSITIONS[component_type]:
+            logger.error(f"Invalid old status {old_status} for {component_type}")
+            return False
+            
+        if new_status not in VALID_STATUS_TRANSITIONS[component_type][old_status]:
+            logger.error(f"Invalid status transition from {old_status} to {new_status} for {component_type}")
+            return False
+            
+        return True
+        
+    def _log_status_change(self, component_type: str, component_id: str, old_status: str, new_status: str) -> None:
+        """
+        Log a status change with validation.
+        
+        Args:
+            component_type (str): Type of component
+            component_id (str): Identifier for the component
+            old_status (str): Current status
+            new_status (str): New status
+        """
+        if self._validate_status_transition(component_type, old_status, new_status):
+            logger.info(f"{component_type} {component_id}: {old_status} -> {new_status}")
+        else:
+            logger.error(f"Invalid status transition attempted: {component_type} {component_id}: {old_status} -> {new_status}")
+            
     def initialize_project(self, topic: str, config: ContentConfig) -> None:
         """
         Initialize a new project with the given topic and configuration.
@@ -109,36 +232,66 @@ class ProjectManager:
             }
         )
         self._save_state()
+        logger.info(f"Initialized new project: {topic}")
         
     def load_project(self) -> bool:
         """
         Load project state from project.json.
         
-        Also checks for any non-generated chunks and triggers the dependency chain
-        to ensure proper regeneration of affected components.
+        Validates all statuses in the project to ensure they are valid according to
+        the defined status rules. If any invalid status is found, the project loading
+        fails immediately.
         
         Returns:
             bool: True if project was successfully loaded, False otherwise
         """
         if not os.path.exists(self.project_file):
+            logger.warning(f"Project file not found: {self.project_file}")
             return False
             
         try:
             with open(self.project_file, 'r') as f:
                 data = json.load(f)
-                self.state = ProjectState(**data)
                 
-            # Check for any non-generated chunks and trigger dependency chain
+            # Create state first
+            self.state = ProjectState(**data)
+            
+            # Check for any non-final statuses and trigger dependency chain
+            # Check script parts
+            for i, part in enumerate(self.state.script["narration_parts"]):
+                if not self._is_final_status("script", part.get("status", "")):
+                    part["status"] = "pending"
+                    
+            # Check visual prompts
+            for i, prompt in enumerate(self.state.script["visual_prompts"]):
+                if not self._is_final_status("visual_prompt", prompt.get("status", "")):
+                    prompt["status"] = "pending"
+                    
+            # Check scenes and their chunks
             for scene in self.state.scenes:
+                # Check scene status
+                if not self._is_final_status("scene", scene.get("status", "")):
+                    scene["status"] = "pending"
+                    scene["assembled_video_path"] = ""
+                    
+                # Check chunks
                 for chunk in scene["chunks"]:
-                    if chunk["status"] != "generated":
-                        self._mark_scene_for_reassembly(scene["scene_idx"])
-                        self._mark_final_for_reassembly()
-                        break
+                    if not self._is_final_status("chunk", chunk.get("status", "")):
+                        chunk["status"] = "pending"
+                        chunk["keyframe_image_path"] = ""
+                        chunk["video_path"] = ""
                         
+            # Check final video status
+            if not self._is_final_status("final_video", self.state.final_video.get("status", "")):
+                self.state.final_video["status"] = "pending"
+                self.state.final_video["path"] = ""
+                
+            # Save the updated state
+            self._save_state()
+            logger.info(f"Loaded project: {self.state.project_info['topic']}")
             return True
         except Exception as e:
-            print(f"Error loading project: {e}")
+            logger.error(f"Error loading project: {e}")
             return False
             
     def _save_state(self) -> None:
@@ -173,6 +326,7 @@ class ProjectManager:
         self.state.script["visual_prompts"] = visual_prompts
         self.state.script["hashtags"] = hashtags
         self._save_state()
+        logger.info("Updated script with new narration parts and visual prompts")
         
     def add_scene(self, scene_idx: int, narration: Dict, chunks: List[Dict]) -> None:
         """
@@ -195,6 +349,8 @@ class ProjectManager:
         
         if existing_scene_idx is not None:
             # Update existing scene
+            old_status = self.state.scenes[existing_scene_idx]["status"]
+            self._log_status_change("scene", f"Scene {scene_idx+1}", old_status, "pending")
             self.state.scenes[existing_scene_idx].update({
                 "narration": narration,
                 "chunks": chunks,
@@ -210,6 +366,7 @@ class ProjectManager:
                 "status": "pending"
             }
             self.state.scenes.append(new_scene)
+            logger.info(f"Added new scene {scene_idx+1}")
             
         self._save_state()
         
@@ -227,6 +384,8 @@ class ProjectManager:
             
         scene = next((s for s in self.state.scenes if s["scene_idx"] == scene_idx), None)
         if scene:
+            old_status = scene["status"]
+            self._log_status_change("scene", f"Scene {scene_idx+1}", old_status, "pending")
             scene["status"] = "pending"
             scene["assembled_video_path"] = ""
             self._save_state()
@@ -240,6 +399,8 @@ class ProjectManager:
         if not self.state:
             return
             
+        old_status = self.state.final_video["status"]
+        self._log_status_change("final_video", "Final Video", old_status, "pending")
         self.state.final_video.update({
             "path": "",
             "status": "pending",
@@ -274,13 +435,15 @@ class ProjectManager:
         if not chunk:
             return
             
-        # If chunk status is changing from generated to something else
-        if chunk["status"] == "generated" and status != "generated":
+        # If chunk status is changing from video_generated to something else
+        if chunk["status"] == "video_generated" and status != "video_generated":
             # Mark scene for reassembly
             self._mark_scene_for_reassembly(scene_idx)
             # Mark final video for reassembly
             self._mark_final_for_reassembly()
             
+        old_status = chunk["status"]
+        self._log_status_change("chunk", f"Scene {scene_idx+1} Chunk {chunk_idx+1}", old_status, status)
         chunk["status"] = status
         if keyframe_path:
             chunk["keyframe_image_path"] = keyframe_path
@@ -305,6 +468,13 @@ class ProjectManager:
         if not scene:
             return
             
+        # If scene status is changing from completed to something else
+        if scene["status"] == "completed" and status != "completed":
+            # Mark final video for reassembly
+            self._mark_final_for_reassembly()
+            
+        old_status = scene["status"]
+        self._log_status_change("scene", f"Scene {scene_idx+1}", old_status, status)
         scene["status"] = status
         if assembled_video_path:
             scene["assembled_video_path"] = assembled_video_path
@@ -326,6 +496,9 @@ class ProjectManager:
         if not self.state:
             return
             
+        old_status = self.state.final_video["status"]
+        self._log_status_change("final_video", "Final Video", old_status, status)
+        
         self.state.final_video.update({
             "path": path,
             "status": status,
@@ -335,6 +508,7 @@ class ProjectManager:
         
         if status == "generated":
             self.state.project_info["status"] = "completed"
+            logger.info("Project marked as completed")
             
         self._save_state()
         
@@ -344,9 +518,9 @@ class ProjectManager:
         
         Tasks are returned in the following order:
         1. Script generation (if no script exists)
-        2. Audio generation (for pending narration parts)
+        2. Audio generation (for non-final narration parts)
         3. Scene creation (for narration parts with audio)
-        4. Chunk generation (for pending chunks)
+        4. Chunk generation (for non-final chunks)
         5. Scene assembly (for scenes with all chunks generated)
         6. Final assembly (if all scenes are completed)
         
@@ -362,21 +536,21 @@ class ProjectManager:
             
         # Check audio generation
         for i, narration in enumerate(self.state.script["narration_parts"]):
-            if narration.get("status") != "generated":
+            if not self._is_final_status("script", narration.get("status", "")):
                 return "generate_audio", {"scene_idx": i, "text": narration["text"]}
                 
         # Check scene creation for each narration part
         for i, narration in enumerate(self.state.script["narration_parts"]):
             # Find if scene exists for this narration
             scene_exists = any(s["scene_idx"] == i for s in self.state.scenes)
-            if narration.get("status") == "generated" and narration.get("audio_path") and not scene_exists:
+            if self._is_final_status("script", narration.get("status", "")) and narration.get("audio_path") and not scene_exists:
                 return "create_scene", {"scene_idx": i}
                 
         # Check video generation for each scene
         for scene in self.state.scenes:
             # Check chunks that need generation
             for chunk in scene["chunks"]:
-                if chunk["status"] != "generated":
+                if not self._is_final_status("chunk", chunk.get("status", "")):
                     return "generate_chunk", {
                         "scene_idx": scene["scene_idx"],
                         "chunk_idx": chunk["chunk_idx"],
@@ -385,11 +559,11 @@ class ProjectManager:
                     }
                     
             # Check if scene needs assembly
-            if scene["status"] != "completed" and all(c["status"] == "video_generated" for c in scene["chunks"]):
+            if not self._is_final_status("scene", scene.get("status", "")) and all(self._is_final_status("chunk", c.get("status", "")) for c in scene["chunks"]):
                 return "assemble_scene", {"scene_idx": scene["scene_idx"]}
                 
         # Check if final video needs assembly
-        if all(s["status"] == "completed" for s in self.state.scenes) and self.state.final_video["status"] != "generated":
+        if all(self._is_final_status("scene", s.get("status", "")) for s in self.state.scenes) and not self._is_final_status("final_video", self.state.final_video.get("status", "")):
             return "assemble_final", {}
             
         return None, None
@@ -479,6 +653,8 @@ class ProjectManager:
             chunk["keyframe_image_path"] = ""
             chunk["video_path"] = ""
             # Mark chunk for regeneration
+            old_status = chunk["status"]
+            self._log_status_change("chunk", f"Scene {scene_idx+1} Chunk {chunk_idx+1}", old_status, "pending")
             chunk["status"] = "pending"
             # Trigger dependency chain
             self._mark_scene_for_reassembly(scene_idx)
@@ -507,6 +683,8 @@ class ProjectManager:
         # Update narration text if provided
         if text and text != scene["narration"]["text"]:
             scene["narration"]["text"] = text
+            old_status = scene["narration"].get("status", "pending")
+            self._log_status_change("script", f"Scene {scene_idx+1} Narration", old_status, "pending")
             scene["narration"]["status"] = "pending"
             scene["narration"]["audio_path"] = ""
             scene["narration"]["duration"] = 0

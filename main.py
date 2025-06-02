@@ -6,6 +6,7 @@ import os
 import importlib
 import math
 import time
+import logging
 from typing import Optional, List, Dict, Any
 
 # Assume video_assembly.py is in the same directory or accessible in PYTHONPATH
@@ -14,14 +15,18 @@ from config_manager import ContentConfig, ModuleSelectorConfig, DEVICE, clear_vr
 from moviepy import VideoFileClip # For getting duration
 from project_manager import ProjectManager
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # --- Utility to dynamically load modules ---
 def load_module(module_path_str: str):
     try:
         module = importlib.import_module(module_path_str)
-        print(f"Successfully loaded module: {module_path_str}")
+        logger.info(f"Successfully loaded module: {module_path_str}")
         return module
     except ImportError as e:
-        print(f"Error loading module {module_path_str}: {e}")
+        logger.error(f"Error loading module {module_path_str}: {e}")
         raise
 
 # --- MAIN WORKFLOW ---
@@ -39,10 +44,12 @@ def main_automation_flow(
     
     if resume:
         if not project_manager.load_project():
-            print("No existing project found to resume.")
+            logger.warning("No existing project found to resume.")
             return None
+        logger.info("Resuming existing project...")
     else:
         project_manager.initialize_project(topic, content_cfg)
+        logger.info("Initialized new project...")
     
     # Dynamically load selected modules
     llm_module = load_module(module_selector_cfg.llm_module)
@@ -64,7 +71,7 @@ def main_automation_flow(
             if not task:
                 break
                 
-            print(f"\n--- Processing task: {task} ---")
+            logger.info(f"\n--- Processing task: {task} ---")
             
             if task == "generate_script":
                 # 1. LLM for Script and Prompts
@@ -79,6 +86,7 @@ def main_automation_flow(
                 visual_prompts = [{"prompt": prompt, "status": "pending"} 
                                 for prompt in script_visual_prompts]
                 project_manager.update_script(narration_parts, visual_prompts, hashtags)
+                logger.info("Script generated and updated in project state")
                 
             elif task == "generate_audio":
                 scene_idx = task_data["scene_idx"]
@@ -91,7 +99,7 @@ def main_automation_flow(
                 )
                 
                 if actual_audio_duration <= 0.1:
-                    print(f"Scene {scene_idx+1} has negligible audio. Skipping.")
+                    logger.warning(f"Scene {scene_idx+1} has negligible audio. Skipping.")
                     continue
                     
                 # Update narration part status
@@ -104,6 +112,7 @@ def main_automation_flow(
                 project_manager.update_script(narration_parts, 
                                            project_manager.state.script["visual_prompts"],
                                            project_manager.state.script["hashtags"])
+                logger.info(f"Audio generated for scene {scene_idx+1}")
                 
             elif task == "create_scene":
                 scene_idx = task_data["scene_idx"]
@@ -113,7 +122,7 @@ def main_automation_flow(
                 # Calculate number of chunks needed
                 num_video_chunks = math.ceil(narration["duration"] / content_cfg.model_max_video_chunk_duration)
                 if num_video_chunks == 0: num_video_chunks = 1
-                print(f"Scene {scene_idx+1}: Audio {narration['duration']:.2f}s. Needs {num_video_chunks} video chunk(s).")
+                logger.info(f"Scene {scene_idx+1}: Audio {narration['duration']:.2f}s. Needs {num_video_chunks} video chunk(s).")
                 
                 # Generate chunk-specific prompts
                 chunk_specific_prompts = llm_module.generate_chunk_visual_prompts(
@@ -152,6 +161,7 @@ def main_automation_flow(
                 
                 # Add scene to project
                 project_manager.add_scene(scene_idx, narration, chunks)
+                logger.info(f"Created scene {scene_idx+1} with {num_video_chunks} chunks")
                 
             elif task == "generate_chunk":
                 scene_idx = task_data["scene_idx"]
@@ -163,6 +173,7 @@ def main_automation_flow(
                 chunk = project_manager.get_chunk_info(scene_idx, chunk_idx)
                 
                 if not scene or not chunk:
+                    logger.error(f"Could not find scene {scene_idx+1} or chunk {chunk_idx+1}")
                     continue
                     
                 num_frames_for_chunk = max(i2v_cfg.svd_min_frames if content_cfg.use_svd_flow else 8,
@@ -180,6 +191,7 @@ def main_automation_flow(
                     )
                     project_manager.update_chunk_status(scene_idx, chunk_idx, "image_generated",
                                                       keyframe_path=keyframe_image_path)
+                    logger.info(f"Generated keyframe for scene {scene_idx+1} chunk {chunk_idx+1}")
                     
                     # Generate video from image
                     video_chunk_filename = f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4"
@@ -204,14 +216,17 @@ def main_automation_flow(
                     project_manager.update_chunk_status(scene_idx, chunk_idx, "video_generated",
                                                       video_path=sub_clip_path)
                     project_manager.update_scene_status(scene_idx, "in_progress")
+                    logger.info(f"Generated video for scene {scene_idx+1} chunk {chunk_idx+1}")
                 else:
                     project_manager.update_chunk_status(scene_idx, chunk_idx, "failed")
+                    logger.error(f"Failed to generate video for scene {scene_idx+1} chunk {chunk_idx+1}")
                 
             elif task == "assemble_scene":
                 scene_idx = task_data["scene_idx"]
                 scene = project_manager.get_scene_info(scene_idx)
                 
                 if not scene:
+                    logger.error(f"Could not find scene {scene_idx+1}")
                     continue
                     
                 # Get all video chunks for the scene
@@ -226,10 +241,13 @@ def main_automation_flow(
                     if final_video_for_scene_path:
                         project_manager.update_scene_status(scene_idx, "completed",
                                                           assembled_video_path=final_video_for_scene_path)
+                        logger.info(f"Assembled scene {scene_idx+1}")
                     else:
                         project_manager.update_scene_status(scene_idx, "failed")
+                        logger.error(f"Failed to assemble scene {scene_idx+1}")
                 else:
                     project_manager.update_scene_status(scene_idx, "failed")
+                    logger.error(f"No video chunks found for scene {scene_idx+1}")
                 
             elif task == "assemble_final":
                 # Get all completed scenes
@@ -259,29 +277,32 @@ def main_automation_flow(
                             full_narration_text,
                             project_manager.state.script["hashtags"]
                         )
+                        logger.info("Final video assembled successfully")
                     else:
                         project_manager.update_final_video("", "failed", "", [])
+                        logger.error("Failed to assemble final video")
                 else:
                     project_manager.update_final_video("", "failed", "", [])
+                    logger.error("No completed scenes found for final assembly")
         
         # Clear TTS model after all scenes are processed
         tts_module.clear_tts_vram()
         
         if project_manager.is_completed():
-            print("\n--- AUTOMATION COMPLETE ---")
-            print(f"Final Video: {project_manager.state.final_video['path']}")
-            print(f"Suggested Caption Text:\n{project_manager.state.final_video['full_narration_text']}")
-            print(f"Suggested Hashtags: {', '.join(project_manager.state.final_video['hashtags'])}")
+            logger.info("\n--- AUTOMATION COMPLETE ---")
+            logger.info(f"Final Video: {project_manager.state.final_video['path']}")
+            logger.info(f"Suggested Caption Text:\n{project_manager.state.final_video['full_narration_text']}")
+            logger.info(f"Suggested Hashtags: {', '.join(project_manager.state.final_video['hashtags'])}")
             final_video_path = project_manager.state.final_video['path']
         else:
-            print("\n--- AUTOMATION FAILED OR NO OUTPUT ---")
+            logger.warning("\n--- AUTOMATION FAILED OR NO OUTPUT ---")
 
     except Exception as e:
-        print(f"Unhandled error in main_automation_flow: {e}")
+        logger.error(f"Unhandled error in main_automation_flow: {e}")
         import traceback
         traceback.print_exc()
     finally:
-        print("Final cleanup: Ensuring all modules attempt VRAM clearing...")
+        logger.info("Final cleanup: Ensuring all modules attempt VRAM clearing...")
         # Call clear methods on all loaded module objects, they handle their own state
         if 'llm_module' in locals() and hasattr(llm_module, 'clear_llm_vram'): llm_module.clear_llm_vram()
         if 'tts_module' in locals() and hasattr(tts_module, 'clear_tts_vram'): tts_module.clear_tts_vram()
@@ -291,7 +312,7 @@ def main_automation_flow(
         
         # A final global clear just in case, though module clears should handle it
         clear_vram_globally() 
-        print("Cleanup finished.")
+        logger.info("Cleanup finished.")
     
     return final_video_path
 
@@ -329,7 +350,7 @@ if __name__ == "__main__":
         content_settings, 
         module_choices,
         speaker_reference_audio=speaker_audio_sample,
-        resume=True  # Set to True to resume from existing project
+        resume=False  # Set to True to resume from existing project
     )
     end_time = time.time()
 

@@ -118,52 +118,6 @@ class ContentConfig:
         print(f"Using Final Output Resolution: {self.final_output_resolution[0]}x{self.final_output_resolution[1]}")
 
 @dataclass
-class LLMConfig:
-    model_id: str = "HuggingFaceH4/zephyr-7b-beta"
-    max_new_tokens_script: int = 1536
-    max_new_tokens_chunk_prompt: int = 256 # Shorter for chunk prompts
-    temperature: float = 0.7
-    top_k: int = 50
-    top_p: float = 0.95
-
-@dataclass
-class TTSConfig:
-    model_id: str = "tts_models/multilingual/multi-dataset/xtts_v2"
-    speaker_language: str = "en"
-
-@dataclass
-class T2IConfig: # For SDXL or similar
-    model_id: str = "stabilityai/stable-diffusion-xl-base-1.0"
-    refiner_id: Optional[str] = None # e.g., "stabilityai/stable-diffusion-xl-refiner-1.0"
-    num_inference_steps: int = 30
-    guidance_scale: float = 7.5
-    # If using refiner, these control the split
-    base_denoising_end: float = 0.8 
-    refiner_denoising_start: float = 0.8
-
-
-@dataclass
-class I2VConfig: # For SVD or similar
-    model_id: str = "stabilityai/stable-video-diffusion-img2vid-xt" # SVD-XT
-    decode_chunk_size: int = 8 # SVD specific, can be 2, 4, 8. Higher might be faster but more VRAM.
-    motion_bucket_id: int = 127 
-    noise_aug_strength: float = 0.02
-    # SVD models have fixed output frames, e.g., SVD-XT is 25, base SVD is 14.
-    # The module will use this as the target and clip/loop if necessary.
-    # This 'num_frames' is what the model *generates*. The main script calculates desired frames based on duration.
-    model_native_frames: int = 25 # For SVD-XT. For base SVD, it's 14.
-    # Min frames for generation request to SVD, even if target_chunk_duration is very short
-    min_request_frames: int = 8 # SVD might have issues with too few frames requested.
-    svd_min_frames: int = 8 # Minimum frames to request from SVD model
-
-
-@dataclass
-class T2VConfig: # For Zeroscope, ModelScope T2V or similar
-    model_id: str = "cerspense/zeroscope_v2_576w"
-    num_inference_steps: int = 25
-    # num_frames for T2V models is often more flexible than SVD
-
-@dataclass
 class ModuleSelectorConfig:
     """Selects which implementation module to use for each step."""
     llm_module: str = "llm_modules.llm_zephyr"
@@ -171,13 +125,6 @@ class ModuleSelectorConfig:
     t2i_module: str = "t2i_modules.t2i_sdxl"
     i2v_module: str = "i2v_modules.i2v_svd"
     t2v_module: str = "t2v_modules.t2v_zeroscope"
-
-    # Configurations for each selected module type
-    llm_config: LLMConfig = field(default_factory=LLMConfig)
-    tts_config: TTSConfig = field(default_factory=TTSConfig)
-    t2i_config: T2IConfig = field(default_factory=T2IConfig)
-    i2v_config: I2VConfig = field(default_factory=I2VConfig)
-    t2v_config: T2VConfig = field(default_factory=T2VConfig)
 
 # Global device setting
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

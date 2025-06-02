@@ -1,8 +1,21 @@
 # t2i_modules/t2i_sdxl.py
 import os
 import torch
+from dataclasses import dataclass
+from typing import Optional
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
-from config_manager import T2IConfig, DEVICE, clear_vram_globally
+from config_manager import DEVICE, clear_vram_globally
+
+@dataclass
+class T2IConfig:
+    """Configuration for SDXL text-to-image model."""
+    model_id: str = "stabilityai/stable-diffusion-xl-base-1.0"
+    refiner_id: Optional[str] = None # e.g., "stabilityai/stable-diffusion-xl-refiner-1.0"
+    num_inference_steps: int = 30
+    guidance_scale: float = 7.5
+    # If using refiner, these control the split
+    base_denoising_end: float = 0.8 
+    refiner_denoising_start: float = 0.8
 
 T2I_PIPE = None
 REFINER_PIPE = None # Optional
@@ -59,8 +72,7 @@ def generate_image(
 
     if refiner:
         image_kwargs["output_type"] = "latent" # Generate latent for refiner
-        # denoising_end could be a config param: t2i_config.denoising_end_base
-        image_kwargs["denoising_end"] = 0.8 
+        image_kwargs["denoising_end"] = t2i_config.base_denoising_end
     
     latents = pipe(**image_kwargs).images[0]
 
@@ -69,8 +81,7 @@ def generate_image(
         image = refiner(
             prompt=prompt,
             image=latents, # Pass latents to refiner
-            # denoising_start could be a config param: t2i_config.denoising_start_refiner
-            denoising_start=0.8, 
+            denoising_start=t2i_config.refiner_denoising_start,
             num_inference_steps=t2i_config.num_inference_steps # Can use same or different steps
         ).images[0]
     else:

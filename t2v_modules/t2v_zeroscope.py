@@ -1,9 +1,17 @@
 # t2v_modules/t2v_zeroscope.py
 import os
 import torch
+from dataclasses import dataclass
 from diffusers import DiffusionPipeline
 from diffusers.utils import export_to_video
-from config_manager import T2VConfig, DEVICE, clear_vram_globally
+from config_manager import DEVICE, clear_vram_globally
+
+@dataclass
+class T2VConfig:
+    """Configuration for Zeroscope text-to-video model."""
+    model_id: str = "cerspense/zeroscope_v2_576w"
+    num_inference_steps: int = 25
+    # num_frames for T2V models is often more flexible than SVD
 
 T2V_PIPE = None
 

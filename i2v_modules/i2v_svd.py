@@ -1,9 +1,25 @@
 # i2v_modules/i2v_svd.py
 import os
 import torch
+from dataclasses import dataclass
 from diffusers import StableVideoDiffusionPipeline
 from diffusers.utils import load_image, export_to_video
-from config_manager import I2VConfig, DEVICE, clear_vram_globally
+from config_manager import DEVICE, clear_vram_globally
+
+@dataclass
+class I2VConfig:
+    """Configuration for Stable Video Diffusion (SVD) model."""
+    model_id: str = "stabilityai/stable-video-diffusion-img2vid-xt" # SVD-XT
+    decode_chunk_size: int = 8 # SVD specific, can be 2, 4, 8. Higher might be faster but more VRAM.
+    motion_bucket_id: int = 127 
+    noise_aug_strength: float = 0.02
+    # SVD models have fixed output frames, e.g., SVD-XT is 25, base SVD is 14.
+    # The module will use this as the target and clip/loop if necessary.
+    # This 'num_frames' is what the model *generates*. The main script calculates desired frames based on duration.
+    model_native_frames: int = 25 # For SVD-XT. For base SVD, it's 14.
+    # Min frames for generation request to SVD, even if target_chunk_duration is very short
+    min_request_frames: int = 8 # SVD might have issues with too few frames requested.
+    svd_min_frames: int = 8 # Minimum frames to request from SVD model
 
 I2V_PIPE = None
 

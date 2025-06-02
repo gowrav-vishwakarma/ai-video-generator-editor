@@ -39,12 +39,12 @@ def main_automation_flow(
     i2v_module = load_module(module_selector_cfg.i2v_module)
     t2v_module = load_module(module_selector_cfg.t2v_module)
 
-    # Extract specific configs for convenience
-    llm_cfg = module_selector_cfg.llm_config
-    tts_cfg = module_selector_cfg.tts_config
-    t2i_cfg = module_selector_cfg.t2i_config
-    i2v_cfg = module_selector_cfg.i2v_config
-    t2v_cfg = module_selector_cfg.t2v_config
+    # Get configs from the loaded modules
+    llm_cfg = llm_module.LLMConfig()
+    tts_cfg = tts_module.TTSConfig()
+    t2i_cfg = t2i_module.T2IConfig()
+    i2v_cfg = i2v_module.I2VConfig()
+    t2v_cfg = t2v_module.T2VConfig()
 
     # Create output directory from content_cfg
     os.makedirs(content_cfg.output_dir, exist_ok=True)
@@ -251,7 +251,7 @@ if __name__ == "__main__":
         print(f"Warning: Speaker ref audio '{speaker_audio_sample}' not found. XTTS uses default voice.")
         speaker_audio_sample = None
     
-    reel_topic = "The surprising benefits of daily walks"
+    reel_topic = "The beauty of nature in the rain"
     # reel_topic = "explaining quantum entanglement simply"
     
     start_time = time.time()

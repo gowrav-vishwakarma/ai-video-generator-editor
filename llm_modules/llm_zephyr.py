@@ -2,9 +2,20 @@
 import torch
 import json
 import re
+from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict, Any
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from config_manager import LLMConfig, ContentConfig, DEVICE, clear_vram_globally # Use global clear for now
+from config_manager import ContentConfig, DEVICE, clear_vram_globally # Use global clear for now
+
+@dataclass
+class LLMConfig:
+    """Configuration for Zephyr LLM model."""
+    model_id: str = "HuggingFaceH4/zephyr-7b-beta"
+    max_new_tokens_script: int = 1536
+    max_new_tokens_chunk_prompt: int = 256 # Shorter for chunk prompts
+    temperature: float = 0.7
+    top_k: int = 50
+    top_p: float = 0.95
 
 MODEL = None
 TOKENIZER = None

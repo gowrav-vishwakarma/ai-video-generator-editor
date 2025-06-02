@@ -2,6 +2,7 @@
 import os
 import torch
 import numpy as np
+from dataclasses import dataclass
 from typing import Tuple, Optional
 from TTS.api import TTS as CoquiTTS
 from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip
@@ -9,7 +10,13 @@ from moviepy.audio.AudioClip import concatenate_audioclips, AudioClip
 from moviepy.video.fx.Crop import Crop # Correct import based on your docs
 
 from scipy.io import wavfile # For fallback silent audio
-from config_manager import TTSConfig, DEVICE, clear_vram_globally
+from config_manager import DEVICE, clear_vram_globally
+
+@dataclass
+class TTSConfig:
+    """Configuration for Coqui TTS model."""
+    model_id: str = "tts_models/multilingual/multi-dataset/xtts_v2"
+    speaker_language: str = "en"
 
 TTS_MODEL = None
 

@@ -2,8 +2,9 @@ import math # For math.ceil
 import os
 
 from typing import List, Optional, Tuple, Dict, Any
-from moviepy import ColorClip, VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip
+from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip
 from moviepy.audio.AudioClip import concatenate_audioclips, AudioClip
+from moviepy.video.VideoClip import ColorClip
 
 from config import ContentConfig 
 
@@ -185,7 +186,7 @@ def assemble_final_reel(
                 # Pad with a background
                 background_clip_for_scene = ColorClip(size=config.target_resolution,
                                            color=(0,0,0), # Black background
-                                           ismask=False, duration=actual_audio_duration) # Duration for background
+                                           duration=actual_audio_duration) # Duration for background
                 all_clips_to_close.append(background_clip_for_scene)
                 # Composite video onto background
                 temp_video_clip = CompositeVideoClip([background_clip_for_scene, temp_video_clip.with_position('center')],

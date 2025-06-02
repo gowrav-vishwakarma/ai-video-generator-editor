@@ -686,11 +686,11 @@ if __name__ == "__main__":
     
     # Example configuration
     content_creation_config = ContentConfig(
-        target_video_length_hint=60,          # Aim for ~20s total narration (LLM guidance)
+        target_video_length_hint=10,          # Aim for ~20s total narration (LLM guidance)
         model_max_video_chunk_duration=3.0,     # Video models generate chunks up to 3s
         max_scene_narration_duration_hint=6.0,  # LLM hint: each narration part ~6s
-        min_scenes=2,
-        max_scenes=8,
+        min_scenes=1,
+        max_scenes=2,
         use_svd_flow=True,                      # SDXL -> SVD
         fps=10,                                  # Higher FPS for smoother SVD
         target_resolution=(1920, 1080),  # 16:9 aspect ratio

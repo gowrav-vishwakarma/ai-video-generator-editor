@@ -359,13 +359,31 @@ def generate_direct_video_chunk(
     # Some T2V models also have max frame limits or work best in certain ranges
     # num_frames = min(num_frames, 60) # Example: if model supports up to 60 frames
 
+    # Calculate dimensions that are divisible by 8
+    base_width = config.target_resolution[0] // 2
+    base_height = config.target_resolution[1] // 2
+    
+    # Ensure dimensions are divisible by 8
+    width = (base_width // 8) * 8
+    height = (base_height // 8) * 8
+    
+    # Ensure minimum dimensions
+    width = max(width, 256)
+    height = max(height, 256)
+    
+    # Ensure dimensions are still divisible by 8 after max()
+    width = (width // 8) * 8
+    height = (height // 8) * 8
+
+    print(f"Scene {scene_idx}, Chunk {chunk_idx}: Using video dimensions {width}x{height}")
+
     # ModelScope/Zeroscope might need width/height parameters
     video_frames = t2v_pipe(
         prompt=video_prompt, 
         num_inference_steps=25, 
         num_frames=num_frames,
-        height=config.target_resolution[1] // 2, # Example: common T2V models often prefer smaller resolutions
-        width=config.target_resolution[0] // 2
+        height=height,
+        width=width
     ).frames # For many diffusers T2V, .frames is the list of PILs
 
     video_chunk_path = os.path.join(config.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_t2v.mp4")
@@ -711,7 +729,7 @@ if __name__ == "__main__":
         max_scene_narration_duration_hint=6.0,  # LLM hint: each narration part ~6s
         min_scenes=1,
         max_scenes=2,
-        use_svd_flow=True,                      # SDXL -> SVD
+        use_svd_flow=False,                      # SDXL -> SVD
         fps=10,                                  # Higher FPS for smoother SVD
         output_dir="my_video_project"
     )

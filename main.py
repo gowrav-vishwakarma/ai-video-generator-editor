@@ -8,6 +8,7 @@ import math
 import time
 import logging
 from typing import Optional, List, Dict, Any
+import torch
 
 # Assume video_assembly.py is in the same directory or accessible in PYTHONPATH
 from video_assembly import assemble_final_reel, assemble_scene_video_from_sub_clips
@@ -192,6 +193,10 @@ def main_automation_flow(
                     project_manager.update_chunk_status(scene_idx, chunk_idx, "image_generated",
                                                       keyframe_path=keyframe_image_path)
                     logger.info(f"Generated keyframe for scene {scene_idx+1} chunk {chunk_idx+1}")
+                    
+                    # Clear T2I VRAM before loading SVD
+                    t2i_module.clear_t2i_vram()
+                    torch.cuda.empty_cache()  # Extra VRAM clearing step
                     
                     # Generate video from image
                     video_chunk_filename = f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4"

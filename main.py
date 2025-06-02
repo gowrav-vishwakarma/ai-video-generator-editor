@@ -331,7 +331,7 @@ if __name__ == "__main__":
         fps=10, # SVD is often trained at lower FPS like 7, then upsample or export at higher
         generation_resolution=(576, 1024), # Optimal for SDXL and SVD-XT (9:16 for reels)
         final_output_resolution=(1080, 1920), # Instagram reels standard resolution
-        output_dir="modular_reels_output/project1",
+        output_dir="modular_reels_output/project3",
         font_for_subtitles="Arial" # Make sure this font is available or provide path to .ttf
     )
 
@@ -342,7 +342,7 @@ if __name__ == "__main__":
         print(f"Warning: Speaker ref audio '{speaker_audio_sample}' not found. XTTS uses default voice.")
         speaker_audio_sample = None
     
-    reel_topic = "the smallest romantic college love story."
+    reel_topic = "history of plantification in desert."
     
     start_time = time.time()
     generated_video = main_automation_flow(

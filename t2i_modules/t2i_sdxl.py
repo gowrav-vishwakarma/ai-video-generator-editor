@@ -10,7 +10,7 @@ from config_manager import DEVICE, clear_vram_globally
 class T2IConfig:
     """Configuration for SDXL text-to-image model."""
     model_id: str = "stabilityai/stable-diffusion-xl-base-1.0"
-    refiner_id: Optional[str] = None # e.g., "stabilityai/stable-diffusion-xl-refiner-1.0"
+    refiner_id: Optional[str] = "stabilityai/stable-diffusion-xl-refiner-1.0" # or None
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
     # If using refiner, these control the split

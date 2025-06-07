@@ -692,4 +692,81 @@ class ProjectManager:
             self._mark_scene_for_reassembly(scene_idx)
             self._mark_final_for_reassembly()
             
-        self._save_state() 
+        self._save_state()
+        
+    def mark_tasks_pending_after(self, task: str) -> None:
+        """
+        Mark all tasks after the specified task as pending.
+        This is used when resuming from a specific point in the pipeline.
+        
+        Args:
+            task (str): Task to start from (all tasks after this will be marked pending)
+        """
+        if not self.state:
+            return
+            
+        # Define task order
+        task_order = [
+            "generate_script",
+            "generate_audio",
+            "create_scene",
+            "generate_chunk",
+            "assemble_scene",
+            "assemble_final"
+        ]
+        
+        # Find the index of the specified task
+        try:
+            start_idx = task_order.index(task)
+        except ValueError:
+            logger.error(f"Unknown task: {task}")
+            return
+            
+        # Mark tasks as pending based on their order
+        if start_idx <= 0:  # generate_script
+            # Reset all script parts
+            for part in self.state.script["narration_parts"]:
+                part["status"] = "pending"
+                part["audio_path"] = ""
+                part["duration"] = 0
+            for prompt in self.state.script["visual_prompts"]:
+                prompt["status"] = "pending"
+                
+        if start_idx <= 1:  # generate_audio
+            # Reset all audio generation
+            for part in self.state.script["narration_parts"]:
+                part["status"] = "pending"
+                part["audio_path"] = ""
+                part["duration"] = 0
+                
+        if start_idx <= 2:  # create_scene
+            # Reset all scenes
+            self.state.scenes = []
+            
+        if start_idx <= 3:  # generate_chunk
+            # Reset all chunks in existing scenes
+            for scene in self.state.scenes:
+                for chunk in scene["chunks"]:
+                    chunk["status"] = "pending"
+                    chunk["keyframe_image_path"] = ""
+                    chunk["video_path"] = ""
+                scene["status"] = "pending"
+                scene["assembled_video_path"] = ""
+                
+        if start_idx <= 4:  # assemble_scene
+            # Reset all scene assemblies
+            for scene in self.state.scenes:
+                scene["status"] = "pending"
+                scene["assembled_video_path"] = ""
+                
+        if start_idx <= 5:  # assemble_final
+            # Reset final video
+            self.state.final_video.update({
+                "path": "",
+                "status": "pending",
+                "full_narration_text": "",
+                "hashtags": []
+            })
+            
+        self._save_state()
+        logger.info(f"Marked all tasks after {task} as pending") 

@@ -53,10 +53,10 @@ def load_project(project_name):
     else:
         st.error("Failed to load project.")
 
-def create_new_project(topic, auto_mode, uploaded_audio):
+def create_new_project(topic, auto_mode, uploaded_audio, video_format):
     project_name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{project_name}_{int(time.time())}"
-    content_cfg = ContentConfig(output_dir=output_dir)
+    content_cfg = ContentConfig(output_dir=output_dir, aspect_ratio_format=video_format)
     pm = ProjectManager(output_dir)
     pm.initialize_project(topic, content_cfg)
     st.session_state.current_project = pm
@@ -89,11 +89,16 @@ def render_project_selection():
         with st.form("new_project_form"):
             st.subheader("Create New Project")
             topic = st.text_input("Video Topic")
+            video_format = st.selectbox(
+                "Final Video Format",
+                ("Portrait (9:16)", "Landscape (16:9)"),
+                index=0 # Default to Portrait
+            )
             auto = st.checkbox("Automatic Mode", value=True)
             audio = st.file_uploader("Reference Speaker Audio (Optional, .wav)", type=['wav'])
             if st.form_submit_button("Create & Start", type="primary"):
                 if not topic: st.error("A topic is required.")
-                else: create_new_project(topic, auto, audio)
+                else: create_new_project(topic, auto, audio, video_format)
 
 def render_processing_dashboard():
     project = st.session_state.current_project

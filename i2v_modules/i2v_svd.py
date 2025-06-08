@@ -39,23 +39,54 @@ def clear_i2v_vram():
     I2V_PIPE = None
     print("I2V (SVD) VRAM cleared.")
 
-# --- Corrected Function Definition ---
+def _resize_and_pad(image: Image.Image, target_width: int, target_height: int) -> Image.Image:
+    """
+    Resizes an image to fit within the target dimensions while maintaining aspect ratio,
+    then pads the remaining space with black bars.
+    """
+    original_aspect = image.width / image.height
+    target_aspect = target_width / target_height
+
+    if original_aspect > target_aspect:
+        new_width = target_width
+        new_height = int(target_width / original_aspect)
+    else:
+        new_height = target_height
+        new_width = int(target_height * original_aspect)
+    
+    # Ensure dimensions are positive before resizing
+    if new_width <= 0 or new_height <= 0:
+        # Fallback to a small size if calculation fails
+        new_width, new_height = 1, 1
+
+    resized_image = image.resize((new_width, new_height), Image.LANCZOS)
+    background = Image.new('RGB', (target_width, target_height), (0, 0, 0))
+    paste_x = (target_width - new_width) // 2
+    paste_y = (target_height - new_height) // 2
+    background.paste(resized_image, (paste_x, paste_y))
+    return background
+
 def generate_video_from_image(
     image_path: str,
     output_video_path: str,
-    target_duration: float,  # The duration we want the final clip to be
+    target_duration: float,
     i2v_config: I2VConfig,
     motion_prompt: str = None
 ) -> str:
     pipe = load_pipeline(i2v_config)
-    print(f"I2V (SVD): Received request for a chunk with target duration: {target_duration:.2f}s.")
+    print(f"I2V (SVD): Received request for chunk with target duration: {target_duration:.2f}s.")
 
     input_image = load_image(image_path)
     
-    svd_optimal_width = 1024
-    svd_optimal_height = 576
-    print(f"Resizing input image to SVD optimal size: {svd_optimal_width}x{svd_optimal_height}")
-    input_image = input_image.resize((svd_optimal_width, svd_optimal_height), Image.LANCZOS)
+    if input_image.width > input_image.height:
+        svd_target_width = 1024
+        svd_target_height = 576
+    else:
+        svd_target_width = 576
+        svd_target_height = 1024
+        
+    print(f"Preparing input image for SVD target size: {svd_target_width}x{svd_target_height}")
+    prepared_image = _resize_and_pad(input_image, svd_target_width, svd_target_height)
 
     frames_to_generate_by_model = i2v_config.model_native_frames
     
@@ -78,12 +109,18 @@ def generate_video_from_image(
             motion_bucket_id = max(0, motion_bucket_id - 50)
         print(f"  Adjusted motion_bucket_id to {motion_bucket_id}")
 
+    # #############################################################################
+    # # --- THE DEFINITIVE FIX ---
+    # # We must explicitly pass the target width and height to the pipeline.
+    # #############################################################################
     video_frames_list = pipe(
-        input_image,
+        image=prepared_image,
+        height=svd_target_height,
+        width=svd_target_width,
         decode_chunk_size=i2v_config.decode_chunk_size,
         num_frames=frames_to_generate_by_model,
         motion_bucket_id=motion_bucket_id,
-        fps=7,
+        fps=7, # This is for internal motion estimation, not output FPS
         noise_aug_strength=i2v_config.noise_aug_strength,
     ).frames[0]
 

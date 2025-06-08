@@ -18,7 +18,6 @@ class ContentConfig:
     # --- Video settings ---
     target_video_length_hint: float = 20.0
     model_max_video_chunk_duration: float = 3.0
-    final_output_resolution: Tuple[int, int] = (1080, 1920)  # Vertical 9:16
     fps: int = 24
 
     # --- Scene settings (for LLM guidance) ---
@@ -33,23 +32,31 @@ class ContentConfig:
     output_dir: str = "modular_reels_output"
     font_for_subtitles: str = "Arial"
 
-    # #############################################################################
-    # # --- THE MAIN FIX ---
-    # # We now set a high-quality default resolution directly.
-    # # All complex properties and setters are removed.
-    # # This is now the single source of truth for generation resolution.
-    # #############################################################################
-    generation_resolution: Tuple[int, int] = (1024, 1024)
+    aspect_ratio_format: str = "Portrait (9:16)" # The user's choice
+
+    @property
+    def final_output_resolution(self) -> Tuple[int, int]:
+        """Calculates final resolution based on the chosen aspect ratio format."""
+        if self.aspect_ratio_format == "Landscape (16:9)":
+            return (1920, 1080)
+        else: # Default to Portrait
+            return (1080, 1920)
+
+    @property
+    def generation_resolution(self) -> Tuple[int, int]:
+        """Calculates generation resolution for SDXL based on aspect ratio."""
+        if self.aspect_ratio_format == "Landscape (16:9)":
+            # A common landscape resolution for SDXL
+            return (1344, 768) 
+        else: # Default to Portrait
+            # A common portrait resolution for SDXL
+            return (768, 1344)
+
 
     def __post_init__(self):
-        """Perform validation after the object is created."""
         os.makedirs(self.output_dir, exist_ok=True)
-
-        # Validate that all resolution dimensions are divisible by 8
-        for res_type, res_val in [("Generation", self.generation_resolution), ("Final Output", self.final_output_resolution)]:
-            if res_val[0] % 8 != 0 or res_val[1] % 8 != 0:
-                raise ValueError(f"{res_type} resolution {res_val} must have dimensions divisible by 8.")
-        
+        # We can remove the old validation as the properties handle it.
+        print(f"Project Format: {self.aspect_ratio_format}")
         print(f"Using Generation Resolution: {self.generation_resolution[0]}x{self.generation_resolution[1]}")
         print(f"Using Final Output Resolution: {self.final_output_resolution[0]}x{self.final_output_resolution[1]}")
 

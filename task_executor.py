@@ -1,22 +1,17 @@
-# In task_executor.py
+# task_executor.py
 
 import logging
 import math
 import os
-from typing import Optional, Dict, Any
-
+from typing import Optional, Dict
 import torch
-from project_manager import ProjectManager
-# Make sure these statuses are imported
-from project_manager import STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED, STATUS_FAILED
+from project_manager import ProjectManager, STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED, STATUS_FAILED
 from config_manager import ContentConfig, ModuleSelectorConfig
 from video_assembly import assemble_final_reel, assemble_scene_video_from_sub_clips
 
 logger = logging.getLogger(__name__)
 
 class TaskExecutor:
-    # ... (init, _load_module, and other execute methods remain the same) ...
-
     def __init__(self, project_manager: ProjectManager, content_cfg: ContentConfig, module_selector_cfg: ModuleSelectorConfig):
         self.project_manager = project_manager
         self.content_cfg = content_cfg
@@ -33,182 +28,132 @@ class TaskExecutor:
         self.t2i_cfg = self.t2i_module.T2IConfig()
         self.i2v_cfg = self.i2v_module.I2VConfig()
         self.t2v_cfg = self.t2v_module.T2VConfig()
-
+        
         # #############################################################################
-        # # --- NEW ORCHESTRATION LOGIC ---
+        # # --- NEW DYNAMIC CONFIGURATION LOGIC ---
         # #############################################################################
-        # After loading modules, we ask them for their optimal settings
-        # and update our main ContentConfig dynamically.
+        print("--- TaskExecutor: Configuring run from model capabilities... ---")
+        
+        # Determine which model's capabilities to use for video generation
         if self.content_cfg.use_svd_flow:
-            # For the T2I->I2V flow, the generation resolution is dictated by the T2I model
-            optimal_res_map = self.t2i_module.get_optimal_resolutions()
+            # For T2I->I2V, resolution is from T2I, duration from I2V (or T2I as fallback)
+            t2i_caps = self.t2i_module.get_model_capabilities()
+            # In a full system, you might get this from i2v_module, but for now this is fine
+            i2v_caps = self.i2v_module.get_model_capabilities() if hasattr(self.i2v_module, 'get_model_capabilities') else t2i_caps
+            
+            self.content_cfg.generation_resolution = t2i_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
+            self.content_cfg.model_max_video_chunk_duration = i2v_caps.get("max_chunk_duration", 3.0)
         else:
-            # For the direct T2V flow, it's dictated by the T2V model
-            optimal_res_map = self.t2v_module.get_optimal_resolutions()
+            # For direct T2V, both resolution and duration come from the T2V model
+            t2v_caps = self.t2v_module.get_model_capabilities()
+            self.content_cfg.generation_resolution = t2v_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
+            self.content_cfg.model_max_video_chunk_duration = t2v_caps.get("max_chunk_duration", 2.0)
+            
+        print(f"Dynamically set Generation Resolution to: {self.content_cfg.generation_resolution}")
+        print(f"Dynamically set Max Chunk Duration to: {self.content_cfg.model_max_video_chunk_duration}s")
+        print("-----------------------------------------------------------------")
 
-        # Set the generation_resolution based on the project's aspect ratio
-        self.content_cfg.generation_resolution = optimal_res_map.get(
-            self.content_cfg.aspect_ratio_format,
-            (1024, 1024) # A fallback
-        )
-        print(f"Dynamically set generation resolution to {self.content_cfg.generation_resolution} based on selected model.")
+        # Save the now-complete config back to the project file for consistency
+        self.project_manager.state.project_info["config"] = self.content_cfg.__dict__
+        self.project_manager._save_state()
         # #############################################################################
 
     def _load_module(self, module_path_str: str):
         parts = module_path_str.split('.'); module_name = ".".join(parts)
-        module = __import__(module_name, fromlist=[parts[-1]])
-        logger.info(f"Successfully loaded module: {module_path_str}")
-        return module
+        return __import__(module_name, fromlist=[parts[-1]])
 
-    def execute_task(self, task: str, task_data: Dict[str, Any]) -> bool:
+    def execute_task(self, task: str, task_data: Dict) -> bool:
         try:
-            if task == "generate_script":
-                return self._execute_generate_script(task_data["topic"])
-            elif task == "generate_audio":
-                return self._execute_generate_audio(task_data["scene_idx"], task_data["text"], task_data.get("speaker_wav"))
-            elif task == "create_scene":
-                return self._execute_create_scene(task_data["scene_idx"])
-            elif task == "generate_chunk_image":
-                return self._execute_generate_chunk_image(task_data["scene_idx"], task_data["chunk_idx"], task_data["visual_prompt"])
-            elif task == "generate_chunk_video":
-                return self._execute_generate_chunk_video(task_data["scene_idx"], task_data["chunk_idx"], task_data.get("motion_prompt"))
-            elif task == "assemble_scene":
-                return self._execute_assemble_scene(task_data["scene_idx"])
-            elif task == "assemble_final":
-                return self._execute_assemble_final()
-            else:
-                logger.error(f"Unknown task: {task}")
-                return False
+            task_map = {
+                "generate_script": self._execute_generate_script, "generate_audio": self._execute_generate_audio,
+                "create_scene": self._execute_create_scene, "generate_chunk_image": self._execute_generate_chunk_image,
+                "generate_chunk_video": self._execute_generate_chunk_video, "generate_chunk_t2v": self._execute_generate_chunk_t2v,
+                "assemble_scene": self._execute_assemble_scene, "assemble_final": self._execute_assemble_final,
+            }
+            if task in task_map:
+                return task_map[task](**task_data)
+            logger.error(f"Unknown task: {task}"); return False
         except Exception as e:
-            logger.error(f"Error executing task {task}: {e}", exc_info=True)
-            return False
+            logger.error(f"Error executing task {task}: {e}", exc_info=True); return False
 
     def _execute_generate_script(self, topic: str) -> bool:
-        try:
-            script_narration_parts, script_visual_prompts, hashtags = self.llm_module.generate_script(
-                topic, self.content_cfg, self.llm_cfg)
-            self.llm_module.clear_llm_vram()
-            
-            if script_visual_prompts and isinstance(script_visual_prompts[0], str):
-                 visual_prompts = [{"prompt": prompt, "status": "pending"} for prompt in script_visual_prompts]
-            else:
-                 visual_prompts = script_visual_prompts
-
-            narration_parts = [{"text": part["text"], "status": "pending"} for part in script_narration_parts]
-            self.project_manager.update_script(narration_parts, visual_prompts, hashtags)
-            return True
-        except Exception as e:
-            logger.error(f"Error generating script: {e}"); return False
+        narration_parts, visual_prompts, hashtags = self.llm_module.generate_script(topic, self.content_cfg, self.llm_cfg)
+        self.llm_module.clear_llm_vram()
+        narration_parts_with_status = [{"text": p["text"], "status": "pending"} for p in narration_parts]
+        visual_prompts_with_status = [{"prompt": p, "status": "pending"} for p in visual_prompts]
+        self.project_manager.update_script(narration_parts_with_status, visual_prompts_with_status, hashtags)
+        return True
 
     def _execute_generate_audio(self, scene_idx: int, text: str, speaker_wav: Optional[str] = None) -> bool:
-        try:
-            scene_audio_path, duration = self.tts_module.generate_audio(text, self.content_cfg.output_dir, scene_idx, self.tts_cfg, speaker_wav=speaker_wav)
-            if duration <= 0.1: logger.warning(f"Scene {scene_idx+1} has negligible audio."); duration = 0.0
-            self.project_manager.update_narration_part_status(scene_idx, "generated", scene_audio_path, duration)
-            return True
-        except Exception as e:
-            logger.error(f"Error generating audio: {e}"); return False
+        path, duration = self.tts_module.generate_audio(text, self.content_cfg.output_dir, scene_idx, self.tts_cfg, speaker_wav=speaker_wav)
+        if duration <= 0.1: duration = 0.0
+        self.project_manager.update_narration_part_status(scene_idx, "generated", path, duration)
+        return True
 
     def _execute_create_scene(self, scene_idx: int) -> bool:
-        try:
-            narration = self.project_manager.state.script["narration_parts"][scene_idx]
-            visual_prompt_data = self.project_manager.state.script["visual_prompts"][scene_idx]
-            num_chunks = math.ceil(narration["duration"] / self.content_cfg.model_max_video_chunk_duration)
-            if num_chunks == 0: num_chunks = 1
-            chunk_prompts = self.llm_module.generate_chunk_visual_prompts(
-                narration["text"], visual_prompt_data["prompt"], num_chunks, self.content_cfg, self.llm_cfg)
-            self.llm_module.clear_llm_vram()
-            
-            chunks = []
-            for i in range(num_chunks):
-                duration = self.content_cfg.model_max_video_chunk_duration if i < num_chunks - 1 else narration["duration"] - (i * self.content_cfg.model_max_video_chunk_duration)
-                visual, motion = chunk_prompts[i]
-                chunks.append({
-                    "chunk_idx": i, "target_duration": max(0.5, duration),
-                    "visual_prompt": visual, "motion_prompt": motion,
-                    "keyframe_image_path": "", "video_path": "", "status": "pending"
-                })
-            self.project_manager.add_scene(scene_idx, chunks)
+        narration = self.project_manager.state.script["narration_parts"][scene_idx]
+        visual_prompt_data = self.project_manager.state.script["visual_prompts"][scene_idx]
+        num_chunks = math.ceil(narration["duration"] / self.content_cfg.model_max_video_chunk_duration)
+        if num_chunks == 0: num_chunks = 1
+        chunk_prompts = self.llm_module.generate_chunk_visual_prompts(narration["text"], visual_prompt_data["prompt"], num_chunks, self.content_cfg, self.llm_cfg)
+        self.llm_module.clear_llm_vram()
+        
+        chunks = []
+        for i in range(num_chunks):
+            duration = self.content_cfg.model_max_video_chunk_duration if i < num_chunks - 1 else narration["duration"] - (i * self.content_cfg.model_max_video_chunk_duration)
+            visual, motion = chunk_prompts[i]
+            chunks.append({"chunk_idx": i, "target_duration": max(0.5, duration), "visual_prompt": visual, "motion_prompt": motion, "status": "pending"})
+        self.project_manager.add_scene(scene_idx, chunks)
+        return True
+
+    def _execute_generate_chunk_image(self, scene_idx: int, chunk_idx: int, visual_prompt: str, **kwargs) -> bool:
+        w, h = self.content_cfg.generation_resolution
+        path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_keyframe.png")
+        self.t2i_module.generate_image(visual_prompt, path, w, h, self.t2i_cfg)
+        self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_IMAGE_GENERATED, keyframe_path=path)
+        self.t2i_module.clear_t2i_vram()
+        return True
+
+    def _execute_generate_chunk_video(self, scene_idx: int, chunk_idx: int, motion_prompt: Optional[str], **kwargs) -> bool:
+        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
+        keyframe_path = chunk.get("keyframe_image_path")
+        if not keyframe_path or not os.path.exists(keyframe_path): return False
+        video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4")
+        sub_clip_path = self.i2v_module.generate_video_from_image(keyframe_path, video_path, chunk["target_duration"], self.i2v_cfg, motion_prompt)
+        if sub_clip_path and os.path.exists(sub_clip_path):
+            self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
             return True
-        except Exception as e:
-            logger.error(f"Error creating scene: {e}"); return False
+        self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_FAILED); return False
 
-    def _execute_generate_chunk_image(self, scene_idx: int, chunk_idx: int, visual_prompt: str) -> bool:
-        try:
-            gen_width, gen_height = self.content_cfg.generation_resolution
-            keyframe_filename = f"scene_{scene_idx}_chunk_{chunk_idx}_keyframe.png"
-            keyframe_path = os.path.join(self.content_cfg.output_dir, keyframe_filename)
-            
-            self.t2i_module.generate_image(visual_prompt, keyframe_path, gen_width, gen_height, self.t2i_cfg)
-            self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_IMAGE_GENERATED, keyframe_path=keyframe_path)
-            self.t2i_module.clear_t2i_vram(); torch.cuda.empty_cache()
+    def _execute_generate_chunk_t2v(self, scene_idx: int, chunk_idx: int, visual_prompt: str, **kwargs) -> bool:
+        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
+        num_frames = int(chunk["target_duration"] * self.content_cfg.fps)
+        w, h = self.content_cfg.generation_resolution
+        video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_t2v.mp4")
+        sub_clip_path = self.t2v_module.generate_video_from_text(visual_prompt, video_path, num_frames, self.content_cfg.fps, w, h, self.t2v_cfg)
+        if sub_clip_path and os.path.exists(sub_clip_path):
+            self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
             return True
-        except Exception as e:
-            logger.error(f"Error generating chunk image: {e}")
-            self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_FAILED)
-            return False
+        self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_FAILED); return False
 
-    def _execute_generate_chunk_video(self, scene_idx: int, chunk_idx: int, motion_prompt: Optional[str] = None) -> bool:
-        try:
-            chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-            keyframe_path = chunk.get("keyframe_image_path")
-            if not keyframe_path or not os.path.exists(keyframe_path):
-                logger.error(f"Cannot generate video for chunk {chunk_idx} in scene {scene_idx}: Keyframe image missing.")
-                return False
-
-            video_filename = f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4"
-            video_path = os.path.join(self.content_cfg.output_dir, video_filename)
-
-            # --- THE CORRECTED CALL ---
-            sub_clip_path = self.i2v_module.generate_video_from_image(
-                image_path=keyframe_path, 
-                output_video_path=video_path, 
-                target_duration=chunk["target_duration"], 
-                i2v_config=self.i2v_cfg, 
-                motion_prompt=motion_prompt
-            )
-            
-            if sub_clip_path and os.path.exists(sub_clip_path):
-                self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
-                return True
-            else:
-                self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_FAILED)
-                return False
-        except Exception as e:
-            logger.error(f"Error generating chunk video: {e}")
-            self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_FAILED)
-            return False
-
-    def _execute_assemble_scene(self, scene_idx: int) -> bool:
-        try:
-            scene = self.project_manager.get_scene_info(scene_idx)
-            if not scene: logger.error(f"Could not find scene {scene_idx}"); return False
-            video_paths = [c["video_path"] for c in scene["chunks"] if c["status"] == STATUS_VIDEO_GENERATED]
-            if len(video_paths) != len(scene['chunks']): logger.error(f"Not all chunks generated for scene {scene_idx}"); return False
-            
-            final_path = assemble_scene_video_from_sub_clips(video_paths, scene["narration"]["duration"], self.content_cfg, scene_idx)
-            if final_path:
-                self.project_manager.update_scene_status(scene_idx, "completed", assembled_video_path=final_path)
-                return True
-            self.project_manager.update_scene_status(scene_idx, "failed"); return False
-        except Exception as e:
-            logger.error(f"Error assembling scene: {e}"); self.project_manager.update_scene_status(scene_idx, "failed"); return False
+    def _execute_assemble_scene(self, scene_idx: int, **kwargs) -> bool:
+        scene = self.project_manager.get_scene_info(scene_idx)
+        if not scene: return False
+        video_paths = [c["video_path"] for c in scene["chunks"] if c["status"] == STATUS_VIDEO_GENERATED]
+        if len(video_paths) != len(scene['chunks']): return False
+        final_path = assemble_scene_video_from_sub_clips(video_paths, scene["narration"]["duration"], self.content_cfg, scene_idx)
+        if final_path:
+            self.project_manager.update_scene_status(scene_idx, "completed", assembled_video_path=final_path)
+            return True
+        self.project_manager.update_scene_status(scene_idx, "failed"); return False
     
-    def _execute_assemble_final(self) -> bool:
-        try:
-            assets = []
-            for scene in self.project_manager.state.scenes:
-                if scene["status"] == "completed":
-                    assets.append((scene["assembled_video_path"], scene["narration"]["audio_path"], {"text": scene["narration"]["text"], "duration": scene["narration"]["duration"]}))
-            if len(assets) != len(self.project_manager.state.scenes): logger.error("Not all scenes completed"); return False
-
-            topic = self.project_manager.state.project_info["topic"]
-            final_path = assemble_final_reel(assets, self.content_cfg, output_filename=f"{topic.replace(' ','_')}_final.mp4")
-            
-            if final_path and os.path.exists(final_path):
-                narration_text = " ".join([a[2]["text"] for a in assets])
-                self.project_manager.update_final_video(final_path, "generated", narration_text, self.project_manager.state.script["hashtags"])
-                return True
-            self.project_manager.update_final_video("", "pending", "", []); return False
-        except Exception as e:
-            logger.error(f"Error assembling final video: {e}"); self.project_manager.update_final_video("", "pending", "", []); return False
+    def _execute_assemble_final(self, **kwargs) -> bool:
+        assets = [(s["assembled_video_path"], s["narration"]["audio_path"], {"text": s["narration"]["text"], "duration": s["narration"]["duration"]}) for s in self.project_manager.state.scenes if s["status"] == "completed"]
+        if len(assets) != len(self.project_manager.state.scenes): return False
+        topic = self.project_manager.state.project_info["topic"]
+        final_path = assemble_final_reel(assets, self.content_cfg, output_filename=f"{topic.replace(' ','_')}_final.mp4")
+        if final_path and os.path.exists(final_path):
+            text = " ".join([a[2]["text"] for a in assets])
+            self.project_manager.update_final_video(final_path, "generated", text, self.project_manager.state.script["hashtags"])
+            return True
+        self.project_manager.update_final_video("", "pending", "", []); return False

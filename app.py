@@ -55,30 +55,28 @@ def load_project(project_name):
         st.error("Failed to load project.")
 
 # --- CHANGE: Function now accepts new parameters ---
-def create_new_project(topic, auto_mode, uploaded_audio, video_format, length, min_scenes, max_scenes):
-    project_name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
-    output_dir = f"modular_reels_output/{project_name}_{int(time.time())}"
-    
-    # --- CHANGE: Pass the new user-defined values to the config ---
-    content_cfg = ContentConfig(
-        output_dir=output_dir,
-        aspect_ratio_format=video_format,
-        target_video_length_hint=length,
-        min_scenes=min_scenes,
-        max_scenes=max_scenes
+def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd):
+    name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
+    output_dir = f"modular_reels_output/{name}_{int(time.time())}"
+    name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
+    output_dir = f"modular_reels_output/{name}_{int(time.time())}"
+    cfg = ContentConfig(
+        output_dir=output_dir, 
+        aspect_ratio_format=video_format, # Pass "Portrait" or "Landscape"
+        target_video_length_hint=length, 
+        min_scenes=min_s, 
+        max_scenes=max_s, 
+        use_svd_flow=use_svd
     )
-    
-    pm = ProjectManager(output_dir)
-    pm.initialize_project(topic, content_cfg)
+    pm = ProjectManager(output_dir); pm.initialize_project(topic, cfg)
     st.session_state.current_project = pm
     st.session_state.ui_executor = UITaskExecutor(pm)
-    st.session_state.auto_mode = auto_mode
-    if uploaded_audio:
+    st.session_state.auto_mode = auto
+    if audio:
         speaker_path = os.path.join(output_dir, "speaker_audio.wav")
-        with open(speaker_path, "wb") as f: f.write(uploaded_audio.getbuffer())
+        with open(speaker_path, "wb") as f: f.write(audio.getbuffer())
         st.session_state.speaker_audio = speaker_path
-    
-    with st.spinner("Generating initial script..."):
+    with st.spinner("Generating script..."):
         success = st.session_state.ui_executor.task_executor.execute_task("generate_script", {"topic": topic})
     if success:
         st.success("Script generated!"); st.session_state.current_project.load_project(); go_to_step('processing_dashboard')
@@ -99,36 +97,27 @@ def render_project_selection():
     with c2:
         with st.form("new_project_form"):
             st.subheader("Create New Project")
-            topic = st.text_input("Video Topic", placeholder="e.g., The secrets of the ocean")
-            
-            # --- CHANGE: Add new number inputs for length and scenes ---
-            col_format, col_length = st.columns(2)
-            with col_format:
-                video_format = st.selectbox("Format", ("Portrait (9:16)", "Landscape (16:9)"), index=0)
-            with col_length:
-                target_length = st.number_input("Target Length (s)", min_value=5, max_value=120, value=20, step=5)
-            
-            st.write("Scene Count:")
-            col_min, col_max = st.columns(2)
-            with col_min:
-                min_s = st.number_input("Min Scenes", min_value=1, max_value=10, value=2, step=1)
-            with col_max:
-                max_s = st.number_input("Max Scenes", min_value=min_s, max_value=10, value=5, step=1)
-            # --- END OF CHANGES ---
-
+            topic = st.text_input("Video Topic")
+            flow = st.radio("Flow", ("Image to Video (High Quality)", "Text to Video (Fast)"), horizontal=True)
+            use_svd = "Image to Video" in flow
+            col1, col2 = st.columns(2)
+            fmt = col1.selectbox("Format", ("Portrait", "Landscape"), index=0)
+            length = col2.number_input("Length (s)", min_value=5, value=20, step=5)
+            st.write("Scene Count:"); c1, c2 = st.columns(2)
+            min_s = c1.number_input("Min", 1, 10, 2, 1)
+            max_s = c2.number_input("Max", min_s, 10, 5, 1)
             auto = st.checkbox("Automatic Mode", value=True)
             audio = st.file_uploader("Reference Speaker Audio (Optional, .wav)", type=['wav'])
-            
             if st.form_submit_button("Create & Start", type="primary"):
-                if not topic: st.error("A topic is required.")
-                # Pass the new values to the creation function
-                else: create_new_project(topic, auto, audio, video_format, target_length, min_s, max_s)
+                if not topic: st.error("Topic required.")
+                else: create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd)
 
 # ... (The rest of app.py can remain the same) ...
 # ... (render_processing_dashboard and render_video_assembly are unchanged) ...
 def render_processing_dashboard():
     project = st.session_state.current_project
     ui_executor = st.session_state.ui_executor
+    use_svd_flow = project.state.project_info["config"].get("use_svd_flow", True)
 
     st.title(f"🎬 Project: {project.state.project_info['topic']}")
     c1, c2, c3 = st.columns([2, 3, 2])
@@ -136,12 +125,9 @@ def render_processing_dashboard():
         if st.button("⬅️ Back to Projects"): go_to_step('project_selection')
     with c2:
         if st.session_state.auto_mode:
-            if st.session_state.is_processing:
-                if st.button("⏹️ Stop Automatic Processing", use_container_width=True):
-                    st.session_state.is_processing = False; st.rerun()
-            else:
-                if st.button("🚀 Start Automatic Processing", type="primary", use_container_width=True):
-                    st.session_state.is_processing = True; st.rerun()
+            btn_text = "⏹️ Stop" if st.session_state.is_processing else "🚀 Start"
+            if st.button(f"{btn_text} Automatic Processing", use_container_width=True, type="primary" if not st.session_state.is_processing else "secondary"):
+                st.session_state.is_processing = not st.session_state.is_processing; st.rerun()
     with c3:
         st.session_state.auto_mode = st.toggle("Automatic Mode", value=st.session_state.auto_mode, disabled=st.session_state.is_processing)
     st.divider()
@@ -159,12 +145,8 @@ def render_processing_dashboard():
             st.info("No reference audio provided.")
     
     next_task_name, next_task_data = project.get_next_pending_task()
-    show_final_assembly_button = (next_task_name == "assemble_final") or (next_task_name is None)
-    _, button_col = st.columns([3, 1])
-    with button_col:
-        if show_final_assembly_button and project.state.scenes:
-            if st.button("Assemble / View Final Video ➡️", type="primary", use_container_width=True, disabled=st.session_state.is_processing):
-                go_to_step('video_assembly')
+    if (next_task_name == "assemble_final") or (next_task_name is None):
+        if st.button("Assemble / View Final Video ➡️", type="primary"): go_to_step('video_assembly')
     st.write("---")
 
     for i, part in enumerate(project.state.script["narration_parts"]):
@@ -182,86 +164,69 @@ def render_processing_dashboard():
                 if st.button("Gen Audio", key=f"gen_audio_{i}", disabled=st.session_state.is_processing):
                     with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio); st.rerun()
             
-            st.divider()
-            st.subheader("Visual Chunks")
+            st.divider(); st.subheader("Visual Chunks")
             scene = project.get_scene_info(i)
             if scene:
                 for chunk in scene["chunks"]:
                     chunk_idx = chunk['chunk_idx']
-                    is_current_image_task = (next_task_name == "generate_chunk_image" and next_task_data and
-                                             next_task_data.get("scene_idx") == i and next_task_data.get("chunk_idx") == chunk_idx)
-                    is_current_video_task = (next_task_name == "generate_chunk_video" and next_task_data and
-                                             next_task_data.get("scene_idx") == i and next_task_data.get("chunk_idx") == chunk_idx)
-
                     with st.container(border=True):
-                        p_col, i_col, v_col = st.columns([2, 1, 1])
-                        with p_col:
-                            st.write(f"**Chunk {chunk_idx + 1}**");
-                            vis = st.text_area("Vis Prompt", chunk['visual_prompt'], key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
-                            if vis != chunk['visual_prompt']: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis); st.rerun()
-                            mot = st.text_area("Mot Prompt", chunk.get('motion_prompt', ''), key=f"m_prompt_{i}_{chunk_idx}", height=75, disabled=st.session_state.is_processing)
-                            if mot != chunk.get('motion_prompt', ''): ui_executor.update_chunk_prompts(i, chunk_idx, motion_prompt=mot); st.rerun()
-                        
-                        with i_col:
-                            st.write("**Image**")
-                            has_image = chunk.get("keyframe_image_path") and os.path.exists(chunk["keyframe_image_path"])
-                            if has_image:
-                                st.image(chunk["keyframe_image_path"])
-                            elif is_current_image_task and st.session_state.is_processing:
-                                with st.spinner("Generating..."): st.info("Image pending...")
-                            else:
-                                st.info("Image pending...")
-                            
-                            button_text = "Regenerate Image" if has_image else "Generate Image"
-                            if st.button(button_text, key=f"gen_img_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
-                                with st.spinner("Generating image..."):
-                                    ui_executor.regenerate_chunk_image(i, chunk_idx)
-                                st.rerun()
-
-                        with v_col:
-                            st.write("**Video**")
-                            has_video = chunk.get("video_path") and os.path.exists(chunk["video_path"])
-                            if has_video:
-                                st.video(chunk["video_path"])
-                            elif is_current_video_task and st.session_state.is_processing:
-                                with st.spinner("Generating..."): st.info("Video pending...")
-                            else:
-                                st.info("Video pending...")
-
-                            button_text = "Regenerate Video" if has_video else "Generate Video"
-                            if st.button(button_text, key=f"gen_vid_{i}_{chunk_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
-                                with st.spinner("Generating video..."):
-                                    ui_executor.regenerate_chunk_video(i, chunk_idx)
-                                st.rerun()
-
-                    if chunk_idx < len(scene["chunks"]) - 1: st.divider()
+                        # --- UI IS CONDITIONAL ON FLOW ---
+                        if use_svd_flow:
+                            p_col, i_col, v_col = st.columns([2, 1, 1])
+                            with p_col: # Prompts
+                                st.write(f"**Chunk {chunk_idx + 1}**")
+                                vis = st.text_area("Visual", chunk['visual_prompt'], key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
+                                if vis != chunk['visual_prompt']: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis); st.rerun()
+                                mot = st.text_area("Motion", chunk.get('motion_prompt', ''), key=f"m_prompt_{i}_{chunk_idx}", height=75, disabled=st.session_state.is_processing)
+                                if mot != chunk.get('motion_prompt', ''): ui_executor.update_chunk_prompts(i, chunk_idx, motion_prompt=mot); st.rerun()
+                            with i_col: # Image
+                                st.write("**Image**"); has_image = chunk.get("keyframe_image_path") and os.path.exists(chunk["keyframe_image_path"])
+                                if has_image: st.image(chunk["keyframe_image_path"])
+                                else: st.info("Image pending...")
+                                btn_txt = "Regen Image" if has_image else "Gen Image"
+                                if st.button(btn_txt, key=f"gen_img_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
+                                    with st.spinner("..."): ui_executor.regenerate_chunk_image(i, chunk_idx); st.rerun()
+                            with v_col: # Video
+                                st.write("**Video**"); has_video = chunk.get("video_path") and os.path.exists(chunk["video_path"])
+                                if has_video: st.video(chunk["video_path"])
+                                else: st.info("Video pending...")
+                                btn_txt = "Regen Video" if has_video else "Gen Video"
+                                if st.button(btn_txt, key=f"gen_vid_{i}_{chunk_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
+                                    with st.spinner("..."): ui_executor.regenerate_chunk_video(i, chunk_idx); st.rerun()
+                        else: # T2V Flow
+                            p_col, v_col = st.columns([2, 1])
+                            with p_col:
+                                st.write(f"**Chunk {chunk_idx + 1} Prompt**")
+                                vis = st.text_area("Prompt", chunk['visual_prompt'], key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
+                                if vis != chunk['visual_prompt']: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis); st.rerun()
+                            with v_col:
+                                st.write("**Video**"); has_video = chunk.get("video_path") and os.path.exists(chunk["video_path"])
+                                if has_video: st.video(chunk["video_path"])
+                                else: st.info("Video pending...")
+                                btn_txt = "Regen Video" if has_video else "Gen Video"
+                                if st.button(btn_txt, key=f"gen_t2v_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
+                                    with st.spinner("..."): ui_executor.regenerate_chunk_t2v(i, chunk_idx); st.rerun()
             elif part.get("status") == "generated":
                  if st.button("Create Scene", key=f"create_scene_{i}", disabled=st.session_state.is_processing):
                     with st.spinner("..."): ui_executor.create_scene(i); st.rerun()
-            else:
-                st.info("Generate audio before scene creation.")
+            else: st.info("Generate audio before scene creation.")
 
     if st.session_state.auto_mode and st.session_state.is_processing:
         if next_task_name is None:
-            st.session_state.is_processing = False; st.toast("✅ All tasks completed!"); go_to_step('video_assembly')
+            st.session_state.is_processing = False; st.toast("✅ All tasks done!"); go_to_step('video_assembly')
         else:
-            if "chunk" in next_task_name:
-                spinner_msg = f"Executing: {next_task_name.replace('_', ' ')} for Scene {next_task_data.get('scene_idx', 0) + 1} / Chunk {next_task_data.get('chunk_idx', 0) + 1}..."
-            else:
-                spinner_msg = f"Executing: {next_task_name.replace('_', ' ')} for Scene {next_task_data.get('scene_idx', 0) + 1}..."
-            
-            with st.spinner(spinner_msg):
+            msg = f"Executing: {next_task_name.replace('_', ' ')} for Scene {next_task_data.get('scene_idx', 0) + 1}..."
+            if "chunk" in next_task_name: msg = f"Executing: {next_task_name.replace('_', ' ')} for Scene {next_task_data.get('scene_idx', 0) + 1} / Chunk {next_task_data.get('chunk_idx', 0) + 1}..."
+            with st.spinner(msg):
                 if next_task_name == 'generate_audio': next_task_data['speaker_wav'] = st.session_state.speaker_audio
                 success = st.session_state.ui_executor.task_executor.execute_task(next_task_name, next_task_data)
-
             if success:
-                project_path = st.session_state.current_project.output_dir
-                fresh_pm = ProjectManager(project_path); fresh_pm.load_project()
+                fresh_pm = ProjectManager(st.session_state.current_project.output_dir); fresh_pm.load_project()
                 st.session_state.current_project = fresh_pm
                 st.session_state.ui_executor = UITaskExecutor(fresh_pm)
                 st.rerun()
             else:
-                st.error(f"❌ Failed on: {next_task_name}. Stopping auto processing."); st.session_state.is_processing = False; st.rerun()
+                st.error(f"❌ Failed on: {next_task_name}. Stopping."); st.session_state.is_processing = False; st.rerun()
 
 def render_video_assembly():
     st.title("Final Video Assembly")

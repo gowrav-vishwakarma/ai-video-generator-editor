@@ -21,6 +21,13 @@ class LtxI2V(BaseI2V):
             "resolutions": {"Portrait": (480, 704), "Landscape": (704, 480)},
             "max_chunk_duration": 2.5 
         }
+    
+    def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
+        # SVD doesn't use text prompts, but this shows how you could add model-specific keywords.
+        # For example, for a different model you might do:
+        if prompt_type == "visual":
+           return f"{prompt}, 8k, photorealistic, cinematic lighting"
+        return prompt # Return original for SVD
 
     def _load_pipeline(self):
         if self.pipe is None:

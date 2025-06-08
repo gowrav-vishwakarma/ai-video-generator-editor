@@ -23,6 +23,13 @@ class SvdI2V(BaseI2V):
             "resolutions": {"Portrait": (576, 1024), "Landscape": (1024, 576)},
             "max_chunk_duration": 3.0 
         }
+        
+    def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
+        # SVD doesn't use text prompts, but this shows how you could add model-specific keywords.
+        # For example, for a different model you might do:
+        # if prompt_type == "visual":
+        #    return f"{prompt}, 8k, photorealistic, cinematic lighting"
+        return prompt # Return original for SVD
 
     def _load_pipeline(self):
         if self.pipe is None:
@@ -61,9 +68,9 @@ class SvdI2V(BaseI2V):
         motion_bucket_id = self.config.motion_bucket_id
         if motion_prompt:
             motion_prompt_lower = motion_prompt.lower()
-            if any(w in motion_prompt_lower for w in ['fast', 'quick', 'rapid']): motion_bucket_id = min(255, motion_bucket_id + 50)
-            elif any(w in motion_prompt_lower for w in ['slow', 'gentle', 'subtle']): motion_bucket_id = max(0, motion_bucket_id - 50)
-            print(f"Adjusted motion_bucket_id to {motion_bucket_id}")
+            if any(w in motion_prompt_lower for w in ['fast', 'quick', 'rapid', 'zoom in', 'pan right']): motion_bucket_id = min(255, motion_bucket_id + 50)
+            elif any(w in motion_prompt_lower for w in ['slow', 'gentle', 'subtle', 'still']): motion_bucket_id = max(0, motion_bucket_id - 50)
+            print(f"Adjusted motion_bucket_id to {motion_bucket_id} based on prompt: '{motion_prompt}'")
 
         video_frames = self.pipe(
             image=prepared_image, height=svd_target_height, width=svd_target_width,

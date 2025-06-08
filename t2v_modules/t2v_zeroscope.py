@@ -19,6 +19,11 @@ class ZeroscopeT2V(BaseT2V):
             "resolutions": {"Portrait": (320, 576), "Landscape": (576, 320)}, # Corrected portrait
             "max_chunk_duration": 2.0 
         }
+    
+    def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
+        if prompt_type == "visual":
+            return f"{prompt}, 8k, photorealistic, cinematic lighting"
+        return prompt
 
     def _load_pipeline(self):
         if self.pipe is None:

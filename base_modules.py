@@ -24,12 +24,12 @@ class BaseLLM(ABC):
         self.tokenizer = None
 
     @abstractmethod
-    def generate_script(self, topic: str, content_config: ContentConfig) -> Tuple[List[Dict[str, Any]], List[str], List[str]]:
-        """Generates the main script, visual prompts, and hashtags for the video."""
+    def generate_script(self, topic: str, content_config: ContentConfig) -> Dict[str, Any]:
+        """Generates the main script, visual prompts, hashtags, and context descriptions."""
         pass
 
     @abstractmethod
-    def generate_chunk_visual_prompts(self, scene_narration: str, original_scene_prompt: str, num_chunks: int, content_config: ContentConfig) -> List[Tuple[str, str]]:
+    def generate_chunk_visual_prompts(self, scene_narration: str, original_scene_prompt: str, num_chunks: int, content_config: ContentConfig, main_subject: str, setting: str) -> List[Tuple[str, str]]:
         """Generates visual and motion prompts for each chunk within a scene."""
         pass
 
@@ -64,6 +64,14 @@ class BaseVideoGen(ABC):
     def get_model_capabilities(self) -> Dict[str, Any]:
         """Returns a dictionary of the model's capabilities, like resolutions."""
         pass
+
+    def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
+        """
+        Optional method to enhance a prompt with model-specific keywords or formatting.
+        prompt_type can be 'visual', 'motion', etc.
+        """
+        # Default implementation does nothing.
+        return prompt
 
     @abstractmethod
     def clear_vram(self):

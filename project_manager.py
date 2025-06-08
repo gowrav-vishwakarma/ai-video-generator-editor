@@ -19,7 +19,7 @@ class ProjectInfo(BaseModel):
     created_at: float = Field(default_factory=time.time)
     last_modified: float = Field(default_factory=time.time)
     status: str = STATUS_IN_PROGRESS
-    config: Dict[str, Any] # Store ContentConfig as a dict for serialization
+    config: Dict[str, Any]
 
 class NarrationPart(BaseModel):
     text: str
@@ -31,6 +31,10 @@ class VisualPrompt(BaseModel):
     prompt: str
 
 class Script(BaseModel):
+    # NEW: Fields for consistent context
+    main_subject_description: str = ""
+    setting_description: str = ""
+    
     narration_parts: List[NarrationPart] = Field(default_factory=list)
     visual_prompts: List[VisualPrompt] = Field(default_factory=list)
     hashtags: List[str] = Field(default_factory=list)
@@ -91,13 +95,16 @@ class ProjectManager:
         except Exception as e:
             logger.error(f"Error loading project with Pydantic: {e}", exc_info=True); return False
 
-    def update_script(self, narration_parts: List[Dict], visual_prompts: List[Dict], hashtags: List[str]):
+    def update_script(self, script_data: Dict[str, Any]):
         if not self.state: return
-        self.state.script.narration_parts = [NarrationPart(**p) for p in narration_parts]
-        self.state.script.visual_prompts = [VisualPrompt(prompt=p) for p in visual_prompts]
-        self.state.script.hashtags = hashtags
+        self.state.script.main_subject_description = script_data.get("main_subject_description", "")
+        self.state.script.setting_description = script_data.get("setting_description", "")
+        self.state.script.narration_parts = [NarrationPart(**p) for p in script_data.get("narration", [])]
+        self.state.script.visual_prompts = [VisualPrompt(prompt=p) for p in script_data.get("visuals", [])]
+        self.state.script.hashtags = script_data.get("hashtags", [])
         self._save_state()
 
+    # ... get_next_pending_task and other methods remain the same ...
     def get_next_pending_task(self) -> Tuple[Optional[str], Optional[Dict]]:
         if not self.state: return None, None
         

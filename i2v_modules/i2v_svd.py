@@ -1,25 +1,22 @@
-# i2v_modules/i2v_svd.py
+# In i2v_modules/i2v_svd.py
+
 import os
 import torch
 from dataclasses import dataclass
 from diffusers import StableVideoDiffusionPipeline
 from diffusers.utils import load_image, export_to_video
 from config_manager import DEVICE, clear_vram_globally
+from PIL import Image
 
 @dataclass
 class I2VConfig:
     """Configuration for Stable Video Diffusion (SVD) model."""
-    model_id: str = "stabilityai/stable-video-diffusion-img2vid-xt" # SVD-XT
-    decode_chunk_size: int = 8 # SVD specific, can be 2, 4, 8. Higher might be faster but more VRAM.
-    motion_bucket_id: int = 127 
+    model_id: str = "stabilityai/stable-video-diffusion-img2vid-xt"
+    decode_chunk_size: int = 8
+    motion_bucket_id: int = 127
     noise_aug_strength: float = 0.02
-    # SVD models have fixed output frames, e.g., SVD-XT is 25, base SVD is 14.
-    # The module will use this as the target and clip/loop if necessary.
-    # This 'num_frames' is what the model *generates*. The main script calculates desired frames based on duration.
-    model_native_frames: int = 25 # For SVD-XT. For base SVD, it's 14.
-    # Min frames for generation request to SVD, even if target_chunk_duration is very short
-    min_request_frames: int = 8 # SVD might have issues with too few frames requested.
-    svd_min_frames: int = 8 # Minimum frames to request from SVD model
+    model_native_frames: int = 25
+    svd_min_frames: int = 8
 
 I2V_PIPE = None
 
@@ -30,77 +27,104 @@ def load_pipeline(config: I2VConfig):
         I2V_PIPE = StableVideoDiffusionPipeline.from_pretrained(
             config.model_id, torch_dtype=torch.float16, variant="fp16"
         )
-        # SVD is memory hungry, CPU offload is good
-        I2V_PIPE.enable_model_cpu_offload() 
+        I2V_PIPE.enable_model_cpu_offload()
         print("I2V (SVD) pipeline loaded.")
     return I2V_PIPE
 
 def clear_i2v_vram():
     global I2V_PIPE
     print("Clearing I2V (SVD) VRAM...")
-    models_to_clear = []
     if I2V_PIPE is not None:
-        models_to_clear.append(I2V_PIPE)
-
-    clear_vram_globally(*models_to_clear)
+        clear_vram_globally(I2V_PIPE)
     I2V_PIPE = None
     print("I2V (SVD) VRAM cleared.")
+
+def _resize_and_pad(image: Image.Image, target_width: int, target_height: int) -> Image.Image:
+    """
+    Resizes an image to fit within the target dimensions while maintaining aspect ratio,
+    then pads the remaining space with black bars.
+    """
+    original_aspect = image.width / image.height
+    target_aspect = target_width / target_height
+
+    if original_aspect > target_aspect:
+        new_width = target_width
+        new_height = int(target_width / original_aspect)
+    else:
+        new_height = target_height
+        new_width = int(target_height * original_aspect)
+    
+    # Ensure dimensions are positive before resizing
+    if new_width <= 0 or new_height <= 0:
+        # Fallback to a small size if calculation fails
+        new_width, new_height = 1, 1
+
+    resized_image = image.resize((new_width, new_height), Image.LANCZOS)
+    background = Image.new('RGB', (target_width, target_height), (0, 0, 0))
+    paste_x = (target_width - new_width) // 2
+    paste_y = (target_height - new_height) // 2
+    background.paste(resized_image, (paste_x, paste_y))
+    return background
 
 def generate_video_from_image(
     image_path: str,
     output_video_path: str,
-    requested_num_frames: int, # This is what main_video_generator calculates based on duration/fps
-    fps: int,
-    width: int, 
-    height: int, 
-    i2v_config: I2VConfig, # Contains model_native_frames
-    motion_prompt: str = None # New parameter for motion guidance
+    target_duration: float,
+    i2v_config: I2VConfig,
+    motion_prompt: str = None
 ) -> str:
     pipe = load_pipeline(i2v_config)
-    print(f"I2V (SVD): Requested {requested_num_frames} frames. Model will generate {i2v_config.model_native_frames} frames.")
+    print(f"I2V (SVD): Received request for chunk with target duration: {target_duration:.2f}s.")
 
     input_image = load_image(image_path)
+    
+    if input_image.width > input_image.height:
+        svd_target_width = 1024
+        svd_target_height = 576
+    else:
+        svd_target_width = 576
+        svd_target_height = 1024
+        
+    print(f"Preparing input image for SVD target size: {svd_target_width}x{svd_target_height}")
+    prepared_image = _resize_and_pad(input_image, svd_target_width, svd_target_height)
 
-    # SVD will generate its native number of frames (e.g., 14 or 25)
-    # The 'num_frames' parameter to SVD pipeline is actually more like 'num_video_frames' in its docs
-    # and corresponds to i2v_config.model_native_frames
     frames_to_generate_by_model = i2v_config.model_native_frames
     
-    # Ensure requested frames for SVD call are at least min_request_frames if the model needs it
-    # However, SVD usually generates a fixed number anyway. This is more for the 'fps' param it takes.
-    # The actual number of frames generated will be model_native_frames.
-    
-    print(f"  Generating video from image: {image_path} (SVD will produce {frames_to_generate_by_model} frames)")
+    if target_duration > 0:
+        calculated_fps = max(1, round(frames_to_generate_by_model / target_duration))
+    else:
+        calculated_fps = 8 
+
+    print(f"  SVD will produce {frames_to_generate_by_model} frames.")
+    print(f"  Exporting at a calculated {calculated_fps} FPS to meet {target_duration:.2f}s target.")
     if motion_prompt:
         print(f"  Using motion prompt: {motion_prompt}")
 
-    # Adjust motion_bucket_id based on motion prompt if provided
     motion_bucket_id = i2v_config.motion_bucket_id
     if motion_prompt:
-        # Simple heuristic to adjust motion based on prompt keywords
         motion_prompt_lower = motion_prompt.lower()
         if any(word in motion_prompt_lower for word in ['fast', 'quick', 'rapid', 'dynamic']):
-            motion_bucket_id = min(255, motion_bucket_id + 50)  # Increase motion
+            motion_bucket_id = min(255, motion_bucket_id + 50)
         elif any(word in motion_prompt_lower for word in ['slow', 'gentle', 'subtle', 'smooth']):
-            motion_bucket_id = max(0, motion_bucket_id - 50)  # Decrease motion
-        print(f"  Adjusted motion_bucket_id to {motion_bucket_id} based on prompt")
+            motion_bucket_id = max(0, motion_bucket_id - 50)
+        print(f"  Adjusted motion_bucket_id to {motion_bucket_id}")
 
-    video_frames_list = pipe( # SVD returns a list containing one tensor of frames
-        input_image,
+    # #############################################################################
+    # # --- THE DEFINITIVE FIX ---
+    # # We must explicitly pass the target width and height to the pipeline.
+    # #############################################################################
+    video_frames_list = pipe(
+        image=prepared_image,
+        height=svd_target_height,
+        width=svd_target_width,
         decode_chunk_size=i2v_config.decode_chunk_size,
-        num_frames=frames_to_generate_by_model, # Tell SVD to generate its standard output
+        num_frames=frames_to_generate_by_model,
         motion_bucket_id=motion_bucket_id,
-        fps=7, # SVD (XT) is often trained with input images at 7 FPS for motion estimation. This is NOT the output FPS.
+        fps=7, # This is for internal motion estimation, not output FPS
         noise_aug_strength=i2v_config.noise_aug_strength,
-        height=height, 
-        width=width    
-    ).frames[0] # frames is a list, video data is the first element
+    ).frames[0]
 
-    # video_frames_list now contains 'model_native_frames' (e.g., 25 frames)
-    # We export these frames at the *target* FPS for the chunk.
-    # The assemble_scene_video_from_sub_clips will handle stretching/ speeding up this chunk
-    # to match the audio duration.
-    export_to_video(video_frames_list, output_video_path, fps=fps) # Use the target FPS for export
+    export_to_video(video_frames_list, output_video_path, fps=calculated_fps)
     
-    print(f"SVD video chunk ({len(video_frames_list)}f exported @ {fps}fps) saved to {output_video_path}")
+    print(f"SVD video chunk ({len(video_frames_list)}f exported @ {calculated_fps}fps) saved to {output_video_path}")
     return output_video_path

@@ -207,6 +207,7 @@ def generate_chunk_visual_prompts(
                     "Visual prompt should describe the content, subject and environment in very details that we want ot show in the chunk. not just a general description of the scene"
                     "if required tell more details about subject like race age gender, if element then tell more details about type, look, material, color, etc."
                     "Do not use Text Overlays or text content in any prompt"
+                    "DO not use any text content in any prompt"
                     "Each prompt should describe a static image and no motion or video related description in visual prompt."
                     "For each chunk, you need to generate TWO prompts:\n"
                     "1. A visual prompt describing what to show (for image generation)\n"

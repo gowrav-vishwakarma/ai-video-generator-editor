@@ -8,8 +8,8 @@ from config_manager import DEVICE, clear_vram_globally
 
 @dataclass
 class T2IConfig:
-    model_id: str = "stabilityai/stable-diffusion-xl-base-1.0"
-    refiner_id: Optional[str] = "stabilityai/stable-diffusion-xl-refiner-1.0"
+    model_id: str = "RunDiffusion/Juggernaut-XL-v9"
+    refiner_id: Optional[str] = None; 
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
     base_denoising_end: float = 0.8 
@@ -55,11 +55,14 @@ def generate_image(prompt: str, output_path: str, width: int, height: int, t2i_c
     kwargs = {"prompt": prompt, "width": width, "height": height, "num_inference_steps": t2i_config.num_inference_steps, "guidance_scale": t2i_config.guidance_scale}
     if refiner:
         kwargs["output_type"] = "latent"; kwargs["denoising_end"] = t2i_config.base_denoising_end
+
+    negative_prompt = "blurry, low resolution, bad anatomy"
+    guidance_scale = 8.0
     
     image = pipe(**kwargs).images[0]
     if refiner:
         print("Refining image...")
-        image = refiner(prompt=prompt, image=image, denoising_start=t2i_config.refiner_denoising_start, num_inference_steps=t2i_config.num_inference_steps).images[0]
+        image = refiner(prompt=prompt, negative_prompt=negative_prompt, image=image, denoising_start=t2i_config.refiner_denoising_start, guidance_scale=guidance_scale, num_inference_steps=t2i_config.num_inference_steps).images[0]
     
     image.save(output_path)
     print(f"Image saved to {output_path}")

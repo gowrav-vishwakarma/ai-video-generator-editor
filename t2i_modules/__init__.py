@@ -1,1 +1,2 @@
-from .t2i_sdxl import T2IConfig, generate_image, clear_t2i_vram
+from .t2i_juggernaut import JuggernautT2I
+from .t2i_sdxl import SdxlT2I

@@ -63,7 +63,7 @@ class ContentConfig:
 class ModuleSelectorConfig:
     llm_module: str = "llm_modules.llm_zephyr"
     tts_module: str = "tts_modules.tts_coqui"
-    t2i_module: str = "t2i_modules.t2i_sdxl"
+    t2i_module: str = "t2i_modules.t2i_juggernaut"
     i2v_module: str = "i2v_modules.i2v_svd"
     t2v_module: str = "t2v_modules.t2v_zeroscope"
 

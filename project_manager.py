@@ -15,6 +15,8 @@ STATUS_GENERATED = "generated"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
 STATUS_IN_PROGRESS = "in_progress"
+STATUS_IMAGE_GENERATED = "image_generated" # New status for chunks
+STATUS_VIDEO_GENERATED = "video_generated" # New status for chunks
 
 @dataclass
 class ProjectState:
@@ -34,8 +36,7 @@ class ProjectManager:
         
     def _save_state(self):
         """Saves the current project state to project.json."""
-        if not self.state:
-            return
+        if not self.state: return
         self.state.project_info["last_modified"] = time.time()
         with open(self.project_file, 'w') as f:
             json.dump(asdict(self.state), f, indent=4)
@@ -44,13 +45,9 @@ class ProjectManager:
         """Initializes a new project."""
         self.state = ProjectState(
             project_info={
-                "topic": topic,
-                "created_at": time.time(),
-                "last_modified": time.time(),
-                "status": STATUS_IN_PROGRESS,
-                "config": asdict(config)
+                "topic": topic, "created_at": time.time(), "last_modified": time.time(),
+                "status": STATUS_IN_PROGRESS, "config": asdict(config)
             },
-            # --- FIX: Added visual_prompts to the initial script structure ---
             script={"narration_parts": [], "visual_prompts": [], "hashtags": []},
             scenes=[],
             final_video={"status": STATUS_PENDING}
@@ -64,14 +61,11 @@ class ProjectManager:
             logger.error(f"Project file not found: {self.project_file}")
             return False
         try:
-            with open(self.project_file, 'r') as f:
-                data = json.load(f)
-            # Ensure new keys exist for backward compatibility
+            with open(self.project_file, 'r') as f: data = json.load(f)
             data.setdefault('scenes', [])
             data.setdefault('final_video', {'status': STATUS_PENDING})
             if 'script' in data and 'visual_prompts' not in data['script']:
                 data['script']['visual_prompts'] = []
-                
             self.state = ProjectState(**data)
             logger.info(f"Loaded project: {self.state.project_info['topic']}")
             return True
@@ -79,75 +73,45 @@ class ProjectManager:
             logger.error(f"Error loading project file {self.project_file}: {e}")
             return False
 
-    # --- FIX: The function signature is now corrected to accept visual_prompts ---
     def update_script(self, narration_parts: List[Dict], visual_prompts: List[Dict], hashtags: List[str]):
-        """Updates the entire script section, including narration and visual prompts."""
         if not self.state: return
         self.state.script["narration_parts"] = narration_parts
         self.state.script["visual_prompts"] = visual_prompts
         self.state.script["hashtags"] = hashtags
         self._save_state()
-        logger.info("Updated script with new narration parts, visual prompts, and hashtags.")
-
-
-    def add_narration_part(self, text: str):
-        """Adds a new narration part to the script."""
-        if not self.state: return
-        new_part = {"text": text, "status": STATUS_PENDING, "audio_path": "", "duration": 0}
-        self.state.script["narration_parts"].append(new_part)
-        self._save_state()
 
     def update_narration_part_text(self, part_idx: int, text: str):
-        """Updates the text of a narration part and resets its audio status."""
         if not self.state or part_idx >= len(self.state.script["narration_parts"]): return
-        
         part = self.state.script["narration_parts"][part_idx]
         if part["text"] != text:
-            part["text"] = text
-            part["status"] = STATUS_PENDING  # Mark for audio re-generation
-            part["audio_path"] = ""
-            part["duration"] = 0
-            
-            # If a scene exists for this part, it's now invalid. Remove it.
+            part["text"] = text; part["status"] = STATUS_PENDING; part["audio_path"] = ""; part["duration"] = 0
             self.state.scenes = [s for s in self.state.scenes if s.get('scene_idx') != part_idx]
             self._mark_final_for_reassembly()
             self._save_state()
             logger.info(f"Updated text for part {part_idx} and reset dependencies.")
 
     def add_scene(self, scene_idx: int, chunks: List[Dict]):
-        """Adds a new scene or updates an existing one."""
         if not self.state: return
         scene_data = {
-            "scene_idx": scene_idx,
-            "narration": self.state.script["narration_parts"][scene_idx],
-            "chunks": chunks,
-            "assembled_video_path": "",
-            "status": STATUS_PENDING
+            "scene_idx": scene_idx, "narration": self.state.script["narration_parts"][scene_idx],
+            "chunks": chunks, "assembled_video_path": "", "status": STATUS_PENDING
         }
-        # Remove old scene if it exists, then add new one
         self.state.scenes = [s for s in self.state.scenes if s.get('scene_idx') != scene_idx]
         self.state.scenes.append(scene_data)
         self.state.scenes.sort(key=lambda s: s['scene_idx'])
         self._save_state()
 
     def update_chunk_content(self, scene_idx: int, chunk_idx: int, visual_prompt: Optional[str] = None, motion_prompt: Optional[str] = None):
-        """Updates a chunk's prompts and resets its video status."""
         scene = self.get_scene_info(scene_idx)
         if not scene or chunk_idx >= len(scene["chunks"]): return
-
         chunk = scene["chunks"][chunk_idx]
         changed = False
         if visual_prompt is not None and chunk["visual_prompt"] != visual_prompt:
-            chunk["visual_prompt"] = visual_prompt
-            changed = True
+            chunk["visual_prompt"] = visual_prompt; changed = True
         if motion_prompt is not None and chunk.get("motion_prompt", "") != motion_prompt:
-            chunk["motion_prompt"] = motion_prompt
-            changed = True
-
+            chunk["motion_prompt"] = motion_prompt; changed = True
         if changed:
-            chunk["status"] = STATUS_PENDING
-            chunk["keyframe_image_path"] = ""
-            chunk["video_path"] = ""
+            chunk["status"] = STATUS_PENDING; chunk["keyframe_image_path"] = ""; chunk["video_path"] = ""
             self._mark_scene_for_reassembly(scene_idx)
             self._save_state()
             logger.info(f"Updated prompts for chunk {chunk_idx} in scene {scene_idx} and reset it.")
@@ -155,60 +119,55 @@ class ProjectManager:
     def _mark_scene_for_reassembly(self, scene_idx: int):
         scene = self.get_scene_info(scene_idx)
         if scene and scene["status"] == STATUS_COMPLETED:
-            scene["status"] = STATUS_PENDING
-            scene["assembled_video_path"] = ""
+            scene["status"] = STATUS_PENDING; scene["assembled_video_path"] = ""
             self._mark_final_for_reassembly()
             logger.info(f"Marked scene {scene_idx} for reassembly.")
 
     def _mark_final_for_reassembly(self):
         if self.state and self.state.final_video.get("status") == STATUS_GENERATED:
-            self.state.final_video["status"] = STATUS_PENDING
-            self.state.final_video["path"] = ""
+            self.state.final_video["status"] = STATUS_PENDING; self.state.final_video["path"] = ""
             self.state.project_info["status"] = STATUS_IN_PROGRESS
             logger.info("Marked final video for reassembly.")
     
     def get_next_pending_task(self) -> Tuple[Optional[str], Optional[Dict]]:
-        """Determines the next task to be executed in the pipeline."""
         if not self.state: return None, None
-
-        # 1. Generate Script (only if it's completely empty)
         if not self.state.script["narration_parts"]:
             return "generate_script", {"topic": self.state.project_info["topic"]}
-
-        # 2. Generate Audio for any pending narration part
         for i, part in enumerate(self.state.script["narration_parts"]):
             if part.get("status") != STATUS_GENERATED:
                 return "generate_audio", {"scene_idx": i, "text": part["text"]}
-        
-        # 3. Create Scene for any part that has audio but no corresponding scene
         narration_indices_with_scenes = {s['scene_idx'] for s in self.state.scenes}
         for i, part in enumerate(self.state.script["narration_parts"]):
             if i not in narration_indices_with_scenes:
                 return "create_scene", {"scene_idx": i}
 
-        # 4. Generate Video for any pending chunk
+        # #############################################################################
+        # # --- CHANGE START: More specific chunk task identification ---
+        # #############################################################################
         for scene in self.state.scenes:
             for chunk in scene["chunks"]:
-                if chunk.get("status") != "video_generated":
-                    return "generate_chunk", {
-                        "scene_idx": scene["scene_idx"],
-                        "chunk_idx": chunk["chunk_idx"],
-                        "visual_prompt": chunk["visual_prompt"],
-                        "motion_prompt": chunk.get("motion_prompt")
-                    }
+                task_data = { "scene_idx": scene["scene_idx"], "chunk_idx": chunk["chunk_idx"],
+                              "visual_prompt": chunk["visual_prompt"], "motion_prompt": chunk.get("motion_prompt")}
+                
+                # If chunk is pending, the next step is to generate its keyframe image
+                if chunk.get("status") == STATUS_PENDING:
+                    return "generate_chunk_image", task_data
+                
+                # If image is done but video is not, the next step is to generate the video
+                if chunk.get("status") == STATUS_IMAGE_GENERATED:
+                    return "generate_chunk_video", task_data
+        # #############################################################################
+        # # --- CHANGE END ---
+        # #############################################################################
 
-        # 5. Assemble any scene that has all its chunks generated but is not yet completed
         for scene in self.state.scenes:
-            all_chunks_done = all(c.get("status") == "video_generated" for c in scene["chunks"])
+            all_chunks_done = all(c.get("status") == STATUS_VIDEO_GENERATED for c in scene["chunks"])
             if all_chunks_done and scene.get("status") != STATUS_COMPLETED:
                 return "assemble_scene", {"scene_idx": scene["scene_idx"]}
-
-        # 6. Assemble Final Video if all scenes are completed and final is pending
         all_scenes_done = all(s.get("status") == STATUS_COMPLETED for s in self.state.scenes)
         if self.state.scenes and all_scenes_done and self.state.final_video.get("status") != STATUS_GENERATED:
             return "assemble_final", {}
-
-        return None, None # All tasks are completed
+        return None, None
 
     def get_scene_info(self, scene_idx: int) -> Optional[Dict]:
         if not self.state: return None
@@ -217,9 +176,7 @@ class ProjectManager:
     def update_narration_part_status(self, part_idx: int, status: str, audio_path: str = "", duration: float = 0.0):
         if not self.state or part_idx >= len(self.state.script["narration_parts"]): return
         part = self.state.script["narration_parts"][part_idx]
-        part['status'] = status
-        part['audio_path'] = audio_path
-        part['duration'] = duration
+        part['status'] = status; part['audio_path'] = audio_path; part['duration'] = duration
         self._save_state()
 
     def update_chunk_status(self, scene_idx, chunk_idx, status, keyframe_path=None, video_path=None):
@@ -241,10 +198,8 @@ class ProjectManager:
     def update_final_video(self, path, status, full_narration_text, hashtags):
         if not self.state: return
         self.state.final_video.update({
-            "path": path,
-            "status": status,
-            "full_narration_text": full_narration_text,
-            "hashtags": hashtags
+            "path": path, "status": status,
+            "full_narration_text": full_narration_text, "hashtags": hashtags
         })
         if status == "generated":
             self.state.project_info["status"] = "completed"

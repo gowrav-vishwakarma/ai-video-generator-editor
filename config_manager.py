@@ -26,6 +26,8 @@ class ContentConfig:
     output_dir: str = "modular_reels_output"
     font_for_subtitles: str = "Arial"
 
+    generation_resolution: Tuple[int, int] = (512, 512) # A safe, temporary default
+
     @property
     def max_scene_narration_duration_hint(self) -> float:
         """Calculates an ideal narration length per scene based on total length and scene count."""
@@ -42,19 +44,12 @@ class ContentConfig:
         else: # Default to Portrait
             return (1080, 1920)
 
-    @property
-    def generation_resolution(self) -> Tuple[int, int]:
-        """Calculates generation resolution for SDXL based on aspect ratio."""
-        if self.aspect_ratio_format == "Landscape (16:9)":
-            return (1344, 768)
-        else: # Default to Portrait
-            return (896, 1152) # A slightly more standard vertical resolution
-
+    
     def __post_init__(self):
-        """Perform validation after the object is created."""
         os.makedirs(self.output_dir, exist_ok=True)
-        print(f"Project Format: {self.aspect_ratio_format}, Target Length: {self.target_video_length_hint}s")
-        print(f"Scene Count Range: {self.min_scenes}-{self.max_scenes}")
+        # This print statement will now show the dynamically set resolution
+        print(f"Project Flow: {'T2I -> I2V (SVD Flow)' if self.use_svd_flow else 'Direct T2V Flow'}")
+        print(f"Project Format: {self.aspect_ratio_format}")
         print(f"Using Generation Resolution: {self.generation_resolution[0]}x{self.generation_resolution[1]}")
         print(f"Using Final Output Resolution: {self.final_output_resolution[0]}x{self.final_output_resolution[1]}")
 

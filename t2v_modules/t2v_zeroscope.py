@@ -37,6 +37,22 @@ def clear_t2v_vram():
     T2V_PIPE = None
     print("T2V VRAM cleared.")
 
+
+# #############################################################################
+# # --- NEW SELF-DESCRIPTION FUNCTION ---
+# #############################################################################
+def get_optimal_resolutions() -> dict:
+    """Returns the optimal generation resolutions for this model."""
+    # Zeroscope 576w is trained on a fixed landscape size.
+    # The final assembly process will crop/pad this to the project's target aspect ratio.
+    return {
+        "Portrait (9:16)": (576, 320),
+        "Landscape (16:9)": (576, 320),
+        "Square (1:1)": (576, 320)
+    }
+# #############################################################################
+
+
 def generate_video_from_text(
     prompt: str,
     output_video_path: str,

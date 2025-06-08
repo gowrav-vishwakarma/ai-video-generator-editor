@@ -52,6 +52,21 @@ def clear_t2i_vram():
     REFINER_PIPE = None
     print("T2I (SDXL) VRAM cleared.")
 
+
+# #############################################################################
+# # --- NEW SELF-DESCRIPTION FUNCTION ---
+# #############################################################################
+def get_optimal_resolutions() -> dict:
+    """Returns the optimal generation resolutions for this model."""
+    return {
+        "Portrait (9:16)": (896, 1152),
+        "Landscape (16:9)": (1344, 768),
+        # You could add other aspect ratios here if needed
+        "Square (1:1)": (1024, 1024)
+    }
+# #############################################################################
+
+
 def generate_image(
     prompt: str, 
     output_path: str, 

@@ -33,7 +33,27 @@ class TaskExecutor:
         self.t2i_cfg = self.t2i_module.T2IConfig()
         self.i2v_cfg = self.i2v_module.I2VConfig()
         self.t2v_cfg = self.t2v_module.T2VConfig()
-    
+
+        # #############################################################################
+        # # --- NEW ORCHESTRATION LOGIC ---
+        # #############################################################################
+        # After loading modules, we ask them for their optimal settings
+        # and update our main ContentConfig dynamically.
+        if self.content_cfg.use_svd_flow:
+            # For the T2I->I2V flow, the generation resolution is dictated by the T2I model
+            optimal_res_map = self.t2i_module.get_optimal_resolutions()
+        else:
+            # For the direct T2V flow, it's dictated by the T2V model
+            optimal_res_map = self.t2v_module.get_optimal_resolutions()
+
+        # Set the generation_resolution based on the project's aspect ratio
+        self.content_cfg.generation_resolution = optimal_res_map.get(
+            self.content_cfg.aspect_ratio_format,
+            (1024, 1024) # A fallback
+        )
+        print(f"Dynamically set generation resolution to {self.content_cfg.generation_resolution} based on selected model.")
+        # #############################################################################
+
     def _load_module(self, module_path_str: str):
         parts = module_path_str.split('.'); module_name = ".".join(parts)
         module = __import__(module_name, fromlist=[parts[-1]])

@@ -16,15 +16,11 @@ class UITaskExecutor:
         self._initialize_task_executor()
         
     def _initialize_task_executor(self):
-        """Initializes the core task executor with project configuration."""
         if not self.project_manager.state:
             st.error("Cannot initialize task executor: Project state not found.")
             return
         try:
             config_dict = self.project_manager.state.project_info["config"]
-            if '_generation_resolution' in config_dict and 'generation_resolution' not in config_dict:
-                config_dict['generation_resolution'] = config_dict.pop('_generation_resolution')
-            
             content_cfg = ContentConfig(**config_dict)
             module_selector_cfg = ModuleSelectorConfig()
             self.task_executor = TaskExecutor(self.project_manager, content_cfg, module_selector_cfg)
@@ -57,7 +53,6 @@ class UITaskExecutor:
         return success
 
     def regenerate_chunk_image(self, scene_idx: int, chunk_idx: int) -> bool:
-        """Generates or regenerates ONLY the keyframe image for a specific chunk."""
         if not self.task_executor: return False
         self.project_manager.update_chunk_content(scene_idx, chunk_idx)
         chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
@@ -69,11 +64,21 @@ class UITaskExecutor:
         return success
 
     def regenerate_chunk_video(self, scene_idx: int, chunk_idx: int) -> bool:
-        """Generates or regenerates ONLY the video for a specific chunk (SVD flow)."""
         if not self.task_executor: return False
         self.project_manager.update_chunk_content(scene_idx, chunk_idx)
         chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        video_task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "motion_prompt": chunk.get("motion_prompt")}
+        
+        # #############################################################################
+        # # --- THE FIX IS HERE ---
+        # # We must add the `visual_prompt` to the data dictionary.
+        # #############################################################################
+        video_task_data = {
+            "scene_idx": scene_idx,
+            "chunk_idx": chunk_idx,
+            "visual_prompt": chunk["visual_prompt"], # <-- This line was missing
+            "motion_prompt": chunk.get("motion_prompt")
+        }
+        
         success = self.task_executor.execute_task("generate_chunk_video", video_task_data)
         if success: st.toast(f"Video for Chunk {chunk_idx + 1} generated!", icon="📹")
         else: st.error(f"Failed to generate video for Chunk {chunk_idx + 1}.")
@@ -81,34 +86,19 @@ class UITaskExecutor:
         return success
 
     def regenerate_chunk_t2v(self, scene_idx: int, chunk_idx: int) -> bool:
-        """Generates or regenerates a T2V chunk directly."""
         if not self.task_executor: return False
-
-        # Reset the status of the chunk to pending
         self.project_manager.update_chunk_content(scene_idx, chunk_idx)
-        
         chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        task_data = {
-            "scene_idx": scene_idx,
-            "chunk_idx": chunk_idx,
-            "visual_prompt": chunk["visual_prompt"],
-        }
-        
+        task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk["visual_prompt"]}
         success = self.task_executor.execute_task("generate_chunk_t2v", task_data)
-        
-        if success:
-            st.toast(f"T2V Chunk {chunk_idx + 1} generated!", icon="📹")
-        else:
-            st.error(f"Failed to generate T2V Chunk {chunk_idx + 1}.")
-            
+        if success: st.toast(f"T2V Chunk {chunk_idx + 1} generated!", icon="📹")
+        else: st.error(f"Failed to generate T2V Chunk {chunk_idx + 1}.")
         self.project_manager.load_project()
         return success
             
     def assemble_final_video(self) -> bool:
         if not self.task_executor: return False
         success = self.task_executor.execute_task("assemble_final", {})
-        if success:
-            st.toast("Final video assembled successfully!", icon="🏆")
-        else:
-            st.error("Failed to assemble final video.")
+        if success: st.toast("Final video assembled successfully!", icon="🏆")
+        else: st.error("Failed to assemble final video.")
         return success

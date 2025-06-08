@@ -114,12 +114,20 @@ class TaskExecutor:
         self.t2i_module.clear_t2i_vram()
         return True
 
-    def _execute_generate_chunk_video(self, scene_idx: int, chunk_idx: int, motion_prompt: Optional[str], **kwargs) -> bool:
+    def _execute_generate_chunk_video(self, scene_idx: int, chunk_idx: int, visual_prompt: str, motion_prompt: Optional[str], **kwargs) -> bool:
         chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
         keyframe_path = chunk.get("keyframe_image_path")
         if not keyframe_path or not os.path.exists(keyframe_path): return False
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4")
-        sub_clip_path = self.i2v_module.generate_video_from_image(keyframe_path, video_path, chunk["target_duration"], self.i2v_cfg, motion_prompt)
+        sub_clip_path = self.i2v_module.generate_video_from_image(
+            image_path=keyframe_path, 
+            output_video_path=video_path, 
+            target_duration=chunk["target_duration"], 
+            content_config=self.content_cfg, # <-- Pass the whole config
+            i2v_config=self.i2v_cfg, 
+            motion_prompt=motion_prompt, 
+            visual_prompt=visual_prompt
+        )
         if sub_clip_path and os.path.exists(sub_clip_path):
             self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
             return True

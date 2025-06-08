@@ -64,7 +64,7 @@ class ModuleSelectorConfig:
     llm_module: str = "llm_modules.llm_zephyr"
     tts_module: str = "tts_modules.tts_coqui"
     t2i_module: str = "t2i_modules.t2i_juggernaut"
-    i2v_module: str = "i2v_modules.i2v_svd"
+    i2v_module: str = "i2v_modules.i2v_ltx"
     t2v_module: str = "t2v_modules.t2v_zeroscope"
 
 def clear_vram_globally(*models_or_pipelines_to_del):

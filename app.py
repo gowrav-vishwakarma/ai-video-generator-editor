@@ -1,3 +1,5 @@
+# In app.py
+
 import streamlit as st
 import os
 import json
@@ -7,7 +9,6 @@ import time
 
 # Fix for torch.classes issue if needed, though often it's better to manage environments.
 torch.classes.__path__ = []
-
 
 from project_manager import ProjectManager
 from config_manager import ContentConfig
@@ -53,10 +54,20 @@ def load_project(project_name):
     else:
         st.error("Failed to load project.")
 
-def create_new_project(topic, auto_mode, uploaded_audio, video_format):
+# --- CHANGE: Function now accepts new parameters ---
+def create_new_project(topic, auto_mode, uploaded_audio, video_format, length, min_scenes, max_scenes):
     project_name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{project_name}_{int(time.time())}"
-    content_cfg = ContentConfig(output_dir=output_dir, aspect_ratio_format=video_format)
+    
+    # --- CHANGE: Pass the new user-defined values to the config ---
+    content_cfg = ContentConfig(
+        output_dir=output_dir,
+        aspect_ratio_format=video_format,
+        target_video_length_hint=length,
+        min_scenes=min_scenes,
+        max_scenes=max_scenes
+    )
+    
     pm = ProjectManager(output_dir)
     pm.initialize_project(topic, content_cfg)
     st.session_state.current_project = pm
@@ -88,18 +99,33 @@ def render_project_selection():
     with c2:
         with st.form("new_project_form"):
             st.subheader("Create New Project")
-            topic = st.text_input("Video Topic")
-            video_format = st.selectbox(
-                "Final Video Format",
-                ("Portrait (9:16)", "Landscape (16:9)"),
-                index=0 # Default to Portrait
-            )
+            topic = st.text_input("Video Topic", placeholder="e.g., The secrets of the ocean")
+            
+            # --- CHANGE: Add new number inputs for length and scenes ---
+            col_format, col_length = st.columns(2)
+            with col_format:
+                video_format = st.selectbox("Format", ("Portrait (9:16)", "Landscape (16:9)"), index=0)
+            with col_length:
+                target_length = st.number_input("Target Length (s)", min_value=5, max_value=120, value=20, step=5)
+            
+            st.write("Scene Count:")
+            col_min, col_max = st.columns(2)
+            with col_min:
+                min_s = st.number_input("Min Scenes", min_value=1, max_value=10, value=2, step=1)
+            with col_max:
+                max_s = st.number_input("Max Scenes", min_value=min_s, max_value=10, value=5, step=1)
+            # --- END OF CHANGES ---
+
             auto = st.checkbox("Automatic Mode", value=True)
             audio = st.file_uploader("Reference Speaker Audio (Optional, .wav)", type=['wav'])
+            
             if st.form_submit_button("Create & Start", type="primary"):
                 if not topic: st.error("A topic is required.")
-                else: create_new_project(topic, auto, audio, video_format)
+                # Pass the new values to the creation function
+                else: create_new_project(topic, auto, audio, video_format, target_length, min_s, max_s)
 
+# ... (The rest of app.py can remain the same) ...
+# ... (render_processing_dashboard and render_video_assembly are unchanged) ...
 def render_processing_dashboard():
     project = st.session_state.current_project
     ui_executor = st.session_state.ui_executor
@@ -186,17 +212,11 @@ def render_processing_dashboard():
                             else:
                                 st.info("Image pending...")
                             
-                            # #############################################################################
-                            # # --- CHANGE START: New button for regenerating image ---
-                            # #############################################################################
                             button_text = "Regenerate Image" if has_image else "Generate Image"
                             if st.button(button_text, key=f"gen_img_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
                                 with st.spinner("Generating image..."):
                                     ui_executor.regenerate_chunk_image(i, chunk_idx)
                                 st.rerun()
-                            # #############################################################################
-                            # # --- CHANGE END ---
-                            # #############################################################################
 
                         with v_col:
                             st.write("**Video**")
@@ -208,18 +228,11 @@ def render_processing_dashboard():
                             else:
                                 st.info("Video pending...")
 
-                            # #############################################################################
-                            # # --- CHANGE START: New button for regenerating video ---
-                            # #############################################################################
                             button_text = "Regenerate Video" if has_video else "Generate Video"
-                            # Disable the video button if no image exists yet.
                             if st.button(button_text, key=f"gen_vid_{i}_{chunk_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
                                 with st.spinner("Generating video..."):
                                     ui_executor.regenerate_chunk_video(i, chunk_idx)
                                 st.rerun()
-                            # #############################################################################
-                            # # --- CHANGE END ---
-                            # #############################################################################
 
                     if chunk_idx < len(scene["chunks"]) - 1: st.divider()
             elif part.get("status") == "generated":

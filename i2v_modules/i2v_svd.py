@@ -1,11 +1,11 @@
 # i2v_modules/i2v_svd.py
 import torch
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Union
 from diffusers import StableVideoDiffusionPipeline
 from diffusers.utils import load_image, export_to_video
 from PIL import Image
 
-from base_modules import BaseI2V, BaseModuleConfig
+from base_modules import BaseI2V, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally, ContentConfig
 
 class SvdI2VConfig(BaseModuleConfig):
@@ -18,10 +18,24 @@ class SvdI2VConfig(BaseModuleConfig):
 class SvdI2V(BaseI2V):
     Config = SvdI2VConfig
 
+    @classmethod
+    def get_capabilities(cls) -> ModuleCapabilities:
+        return ModuleCapabilities(
+            vram_gb_min=8.0,
+            ram_gb_min=12.0,
+            supported_formats=["Portrait", "Landscape"],
+            supports_ip_adapter=True,
+            supports_lora=True, # Juggernaut is a fine-tune, can easily use LoRAs
+            max_subjects=2, # Can handle one or two IP adapter images
+            accepts_text_prompt=False,
+            accepts_negative_prompt=True
+        )
+
+
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (576, 1024), "Landscape": (1024, 576)},
-            "max_chunk_duration": 3.0 
+            "max_chunk_duration": 2.0 
         }
         
     def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
@@ -55,8 +69,11 @@ class SvdI2V(BaseI2V):
         background.paste(resized_image, ((target_width - new_width) // 2, (target_height - new_height) // 2))
         return background
 
-    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str]) -> str:
+    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str], ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         self._load_pipeline()
+
+        if ip_adapter_image:
+            print("Warning: SvdI2V module received IP-Adapter image but does not currently implement its use.")
 
         input_image = load_image(image_path)
         svd_target_res = self.get_model_capabilities()["resolutions"]

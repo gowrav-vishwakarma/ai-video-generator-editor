@@ -1,9 +1,10 @@
-# t2i_modules/t2i_juggernaut.py
+# In t2i_modules/t2i_juggernaut.py
 import torch
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
+from diffusers.utils import load_image
 
-from base_modules import BaseT2I, BaseModuleConfig
+from base_modules import BaseT2I, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally
 
 class JuggernautT2IConfig(BaseModuleConfig):
@@ -11,6 +12,10 @@ class JuggernautT2IConfig(BaseModuleConfig):
     refiner_id: Optional[str] = None
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
+    ip_adapter_repo: str = "h94/IP-Adapter"
+    ip_adapter_subfolder: str = "sdxl_models"
+    ip_adapter_weight_name: str = "ip-adapter_sdxl.bin"
+
 
 class JuggernautT2I(BaseT2I):
     Config = JuggernautT2IConfig
@@ -18,6 +23,20 @@ class JuggernautT2I(BaseT2I):
     def __init__(self, config: JuggernautT2IConfig):
         super().__init__(config)
         self.refiner_pipe = None
+        self._loaded_ip_adapter_count = 0
+    
+    @classmethod
+    def get_capabilities(cls) -> ModuleCapabilities:
+        return ModuleCapabilities(
+            vram_gb_min=8.0,
+            ram_gb_min=12.0,
+            supported_formats=["Portrait", "Landscape"],
+            supports_ip_adapter=True,
+            supports_lora=True,
+            max_subjects=2,
+            accepts_text_prompt=True,
+            accepts_negative_prompt=True
+        )
 
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
@@ -27,13 +46,12 @@ class JuggernautT2I(BaseT2I):
 
     def _load_pipeline(self):
         if self.pipe is None:
-            print(f"Loading T2I pipeline (Juggernaut): {self.config.model_id}...")
+            print(f"Loading T2I pipeline (Juggernaut): {self.config.model_id}... to {DEVICE}")
             self.pipe = StableDiffusionXLPipeline.from_pretrained(
-                self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
-            ).to(DEVICE)
+                self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True, device_map="balanced" 
+            )
             print("Juggernaut Base pipeline loaded.")
             if self.config.refiner_id:
-                # This part is simplified as Juggernaut doesn't typically use a refiner
                 print(f"Refiner specified but not typically used with Juggernaut, skipping load.")
 
     def clear_vram(self):
@@ -41,18 +59,67 @@ class JuggernautT2I(BaseT2I):
         models = [m for m in [self.pipe, self.refiner_pipe] if m is not None]
         if models: clear_vram_globally(*models)
         self.pipe, self.refiner_pipe = None, None
+        self._loaded_ip_adapter_count = 0
         print("T2I (Juggernaut) VRAM cleared.")
 
-    def generate_image(self, prompt: str, output_path: str, width: int, height: int) -> str:
+    def generate_image(self, prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         self._load_pipeline()
-        print(f"Juggernaut generating image with resolution: {width}x{height}")
+        
+        pipeline_kwargs = {}
+        ip_images_to_load = []
+
+        if ip_adapter_image:
+            if isinstance(ip_adapter_image, str):
+                ip_images_to_load = [ip_adapter_image]
+            else:
+                ip_images_to_load = ip_adapter_image
+        
+        num_ip_images = len(ip_images_to_load)
+
+        if num_ip_images > 0:
+            print(f"Juggernaut T2I: Activating IP-Adapter with {num_ip_images} character image(s).")
+
+            if self._loaded_ip_adapter_count != num_ip_images:
+                print(f"Loading {num_ip_images} IP-Adapter(s) for the pipeline...")
+                
+                if hasattr(self.pipe, "unload_ip_adapter"):
+                    self.pipe.unload_ip_adapter()
+
+                adapter_weights = [self.config.ip_adapter_weight_name] * num_ip_images
+                
+                self.pipe.load_ip_adapter(
+                    self.config.ip_adapter_repo, 
+                    subfolder=self.config.ip_adapter_subfolder, 
+                    weight_name=adapter_weights
+                )
+                self._loaded_ip_adapter_count = num_ip_images
+                print(f"Successfully loaded {self._loaded_ip_adapter_count} adapters.")
+
+            # --- THE FIX IS HERE ---
+            # Create a list of scales, one for each adapter.
+            scales = [0.6] * num_ip_images
+            print(f"Setting IP-Adapter scales to: {scales}")
+            self.pipe.set_ip_adapter_scale(scales) 
+
+            ip_images = [load_image(p) for p in ip_images_to_load]
+            pipeline_kwargs["ip_adapter_image"] = ip_images
+        else:
+            print("Juggernaut T2I: No IP-Adapter image provided. Generating from text prompt only.")
+            if self._loaded_ip_adapter_count > 0:
+                 if hasattr(self.pipe, "unload_ip_adapter"):
+                    self.pipe.unload_ip_adapter()
+                 self._loaded_ip_adapter_count = 0
+
+        
+        print(f"Juggernaut generating image with resolution: {width}x{height} for prompt: '{prompt}'")
         
         image = self.pipe(
             prompt=prompt,
             width=width,
             height=height,
             num_inference_steps=self.config.num_inference_steps,
-            guidance_scale=self.config.guidance_scale
+            guidance_scale=self.config.guidance_scale,
+            **pipeline_kwargs
         ).images[0]
         
         image.save(output_path)

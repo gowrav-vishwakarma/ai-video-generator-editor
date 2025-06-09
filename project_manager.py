@@ -39,6 +39,14 @@ class Script(BaseModel):
     visual_prompts: List[VisualPrompt] = Field(default_factory=list)
     hashtags: List[str] = Field(default_factory=list)
 
+class Character(BaseModel):
+    """Represents a character/subject in the project."""
+    name: str
+    reference_image_path: str
+    source_prompt: Optional[str] = None
+    source_image_path: Optional[str] = None # Path to the user-uploaded image
+
+
 class Chunk(BaseModel):
     chunk_idx: int
     target_duration: float
@@ -53,6 +61,7 @@ class Scene(BaseModel):
     status: str = STATUS_PENDING
     assembled_video_path: str = ""
     chunks: List[Chunk] = Field(default_factory=list)
+    character_names: List[str] = Field(default_factory=list)
 
 class FinalVideo(BaseModel):
     status: str = STATUS_PENDING
@@ -63,6 +72,7 @@ class FinalVideo(BaseModel):
 class ProjectState(BaseModel):
     project_info: ProjectInfo
     script: Script = Field(default_factory=Script)
+    characters: List[Character] = Field(default_factory=list)
     scenes: List[Scene] = Field(default_factory=list)
     final_video: FinalVideo = Field(default_factory=FinalVideo)
 
@@ -215,3 +225,69 @@ class ProjectManager:
         self.state.final_video.hashtags = hashtags
         if status == "generated": self.state.project_info.status = "completed"
         self._save_state()
+    
+    def add_character(self, character_data: Dict[str, Any]):
+        if not self.state: return
+        char = Character(**character_data)
+        self.state.characters = [c for c in self.state.characters if c.name != char.name]
+        self.state.characters.append(char)
+        self._save_state()
+
+    def update_character(self, old_name: str, new_name: str, new_reference_image_path: Optional[str]):
+        char = self.get_character(old_name)
+        if not char: return
+
+        image_changed = new_reference_image_path and char.reference_image_path != new_reference_image_path
+        name_changed = new_name and char.name != new_name
+
+        if image_changed:
+            char.reference_image_path = new_reference_image_path
+            self._reset_visuals_for_character(old_name)
+
+        if name_changed:
+            char.name = new_name
+            self._update_scene_references_on_name_change(old_name, new_name)
+        
+        self._save_state()
+
+    def delete_character(self, name: str):
+        if not self.state: return
+        self.state.characters = [c for c in self.state.characters if c.name != name]
+        for scene in self.state.scenes:
+            if name in scene.character_names:
+                scene.character_names.remove(name)
+        
+        safe_name = name.replace(" ", "_")
+        char_dir = os.path.join(self.output_dir, "characters", safe_name)
+        if os.path.exists(char_dir):
+            shutil.rmtree(char_dir)
+            print(f"Removed character asset directory: {char_dir}")
+
+        self._save_state()
+        
+    def _reset_visuals_for_character(self, character_name: str):
+        print(f"Resetting visuals for scenes containing character: {character_name}")
+        for scene in self.state.scenes:
+            if character_name in scene.character_names:
+                for chunk in scene.chunks:
+                    chunk.status = STATUS_PENDING
+                    chunk.keyframe_image_path = ""
+                    chunk.video_path = ""
+                scene.status = STATUS_PENDING
+                scene.assembled_video_path = ""
+        self._mark_final_for_reassembly()
+        
+    def _update_scene_references_on_name_change(self, old_name: str, new_name: str):
+        for scene in self.state.scenes:
+            if old_name in scene.character_names:
+                scene.character_names = [new_name if name == old_name else name for name in scene.character_names]
+
+    def get_character(self, name: str) -> Optional[Character]:
+        if not self.state: return None
+        return next((c for c in self.state.characters if c.name == name), None)
+        
+    def update_scene_characters(self, scene_idx: int, character_names: List[str]):
+        scene = self.get_scene_info(scene_idx)
+        if scene:
+            scene.character_names = character_names
+            self._save_state()

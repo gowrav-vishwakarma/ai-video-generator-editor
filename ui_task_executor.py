@@ -1,15 +1,20 @@
+# In ui_task_executor.py
+
 import streamlit as st
 from task_executor import TaskExecutor
 from config_manager import ContentConfig
 import logging
-from typing import Optional
+from typing import List, Optional
 import os
+# --- FIX: Import the helper function from app.py ---
+from utils import load_and_correct_image_orientation
 
 logger = logging.getLogger(__name__)
 
 class UITaskExecutor:
     """Handles task execution triggered from the Streamlit UI, providing user feedback."""
     
+    # ... (no changes to __init__ or other methods) ...
     def __init__(self, project_manager):
         self.project_manager = project_manager
         self.task_executor: Optional[TaskExecutor] = None
@@ -97,3 +102,52 @@ class UITaskExecutor:
         else: st.error("Failed to assemble final video.")
         self.project_manager.load_project()
         return success
+
+    def add_character(self, name: str, image_file: "UploadedFile"):
+        if not self.project_manager.state: return False
+        safe_name = name.replace(" ", "_")
+        char_dir = os.path.join(self.project_manager.output_dir, "characters", safe_name)
+        os.makedirs(char_dir, exist_ok=True)
+        ref_image_path = os.path.join(char_dir, "reference.png")
+        
+        # --- FIX: Correct orientation before saving ---
+        corrected_image = load_and_correct_image_orientation(image_file)
+        if corrected_image:
+            corrected_image.save(ref_image_path, "PNG")
+            char_data = {"name": name, "reference_image_path": ref_image_path}
+            self.project_manager.add_character(char_data)
+            st.toast(f"Character '{name}' added!", icon="👤")
+            return True
+        else:
+            st.error(f"Could not process image for new character {name}. Aborting.")
+            return False
+
+    def update_character(self, old_name: str, new_name: str, new_image_file: Optional["UploadedFile"]):
+        ref_image_path = None
+        if new_image_file:
+            safe_name = (new_name or old_name).replace(" ", "_")
+            char_dir = os.path.join(self.project_manager.output_dir, "characters", safe_name)
+            os.makedirs(char_dir, exist_ok=True)
+            ref_image_path = os.path.join(char_dir, "reference.png")
+
+            # --- FIX: Correct orientation before saving the new image ---
+            corrected_image = load_and_correct_image_orientation(new_image_file)
+            if corrected_image:
+                corrected_image.save(ref_image_path, "PNG")
+            else:
+                # If image processing fails, don't update the image path.
+                st.error("Failed to process the new image. Character image was not updated.")
+                ref_image_path = None 
+
+        self.project_manager.update_character(old_name, new_name, ref_image_path)
+        st.toast(f"Character '{old_name}' updated!", icon="✏️")
+        return True
+
+    def delete_character(self, name: str):
+        self.project_manager.delete_character(name)
+        st.toast(f"Character '{name}' deleted!", icon="🗑️")
+        return True
+    
+    def update_scene_characters(self, scene_idx: int, character_names: List[str]):
+        self.project_manager.update_scene_characters(scene_idx, character_names)
+        st.toast(f"Characters for Scene {scene_idx+1} updated.", icon="🎬")

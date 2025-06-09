@@ -9,6 +9,9 @@ OUTPUT_FILE="combined_code.txt"
 # Directories will be scanned recursively.
 # Use spaces to separate items.
 FILES_TO_INCLUDE=(
+    "base_modules.py"
+    "utils.py"
+    "module_discovery.py"
     "app.py"
     "project_manager.py"
     "task_executor.py"

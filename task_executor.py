@@ -1,4 +1,4 @@
-# task_executor.py
+# In task_executor.py
 import logging
 import math
 import os
@@ -7,9 +7,9 @@ import torch
 from importlib import import_module
 
 from project_manager import ProjectManager, STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED, STATUS_FAILED
-from config_manager import ContentConfig, ModuleSelectorConfig
+from config_manager import ContentConfig
 from video_assembly import assemble_final_reel, assemble_scene_video_from_sub_clips
-from base_modules import BaseModuleConfig
+from base_modules import ModuleCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -22,27 +22,44 @@ class TaskExecutor:
     def __init__(self, project_manager: ProjectManager):
         self.project_manager = project_manager
         self.content_cfg = ContentConfig(**self.project_manager.state.project_info.config)
-        module_selector_cfg = ModuleSelectorConfig()
+        
+        module_selections = self.content_cfg.module_selections
+        if not module_selections:
+            raise ValueError("Project state is missing module selections. Cannot initialize TaskExecutor.")
 
-        LlmClass = _import_class(module_selector_cfg.llm_module)
+        LlmClass = _import_class(module_selections["llm"])
         self.llm_module = LlmClass(LlmClass.Config())
         
-        TtsClass = _import_class(module_selector_cfg.tts_module)
+        TtsClass = _import_class(module_selections["tts"])
         self.tts_module = TtsClass(TtsClass.Config())
 
-        T2iClass = _import_class(module_selector_cfg.t2i_module)
+        T2iClass = _import_class(module_selections["t2i"])
         self.t2i_module = T2iClass(T2iClass.Config())
 
-        I2vClass = _import_class(module_selector_cfg.i2v_module)
+        I2vClass = _import_class(module_selections["i2v"])
         self.i2v_module = I2vClass(I2vClass.Config())
 
-        T2vClass = _import_class(module_selector_cfg.t2v_module)
+        T2vClass = _import_class(module_selections["t2v"])
         self.t2v_module = T2vClass(T2vClass.Config())
+        
+        # --- REFACTORED: Corrected Holistic Capability Check ---
+        self.active_flow_supports_characters: bool
+        if self.content_cfg.use_svd_flow:
+            # For I2V flow, ONLY the T2I module MUST support characters.
+            t2i_caps = self.t2i_module.get_capabilities()
+            self.active_flow_supports_characters = t2i_caps.supports_ip_adapter
+            print("Decisive module for character support: T2I module.")
+        else:
+            # For T2V flow, only the T2V module matters.
+            t2v_caps = self.t2v_module.get_capabilities()
+            self.active_flow_supports_characters = t2v_caps.supports_ip_adapter
+            print("Decisive module for character support: T2V module.")
+        
+        print(f"Holistic check: Active flow supports characters: {self.active_flow_supports_characters}")
         
         self._configure_from_model_capabilities()
 
     def _configure_from_model_capabilities(self):
-        # ... this method is unchanged ...
         print("--- TaskExecutor: Configuring run from model capabilities... ---")
         if self.content_cfg.use_svd_flow:
             t2i_caps = self.t2i_module.get_model_capabilities()
@@ -106,10 +123,22 @@ class TaskExecutor:
         w, h = self.content_cfg.generation_resolution
         path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_keyframe.png")
         
-        # NEW: Enhance prompt before generation
         enhanced_prompt = self.t2i_module.enhance_prompt(visual_prompt)
         
-        self.t2i_module.generate_image(enhanced_prompt, path, w, h)
+        scene = self.project_manager.get_scene_info(scene_idx)
+        ip_adapter_image_paths = []
+        if scene and scene.character_names:
+            print(f"Found characters for Scene {scene_idx}: {scene.character_names}")
+            for name in scene.character_names:
+                char = self.project_manager.get_character(name)
+                if char and os.path.exists(char.reference_image_path):
+                    ip_adapter_image_paths.append(char.reference_image_path)
+        
+        self.t2i_module.generate_image(
+            enhanced_prompt, path, w, h, 
+            ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
+        )
+        
         self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_IMAGE_GENERATED, keyframe_path=path)
         self.t2i_module.clear_vram()
         return True
@@ -118,16 +147,29 @@ class TaskExecutor:
         chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
         if not chunk.keyframe_image_path or not os.path.exists(chunk.keyframe_image_path): return False
         
-        # NEW: Enhance prompts before generation
         enhanced_visual = self.i2v_module.enhance_prompt(visual_prompt, "visual")
         enhanced_motion = self.i2v_module.enhance_prompt(motion_prompt, "motion")
 
+        scene = self.project_manager.get_scene_info(scene_idx)
+        ip_adapter_image_paths = []
+        if scene and scene.character_names:
+            for name in scene.character_names:
+                char = self.project_manager.get_character(name)
+                if char and os.path.exists(char.reference_image_path):
+                    ip_adapter_image_paths.append(char.reference_image_path)
+
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4")
+        
         sub_clip_path = self.i2v_module.generate_video_from_image(
-            image_path=chunk.keyframe_image_path, output_video_path=video_path, 
-            target_duration=chunk.target_duration, content_config=self.content_cfg,
-            visual_prompt=enhanced_visual, motion_prompt=enhanced_motion
+            image_path=chunk.keyframe_image_path, 
+            output_video_path=video_path, 
+            target_duration=chunk.target_duration, 
+            content_config=self.content_cfg,
+            visual_prompt=enhanced_visual, 
+            motion_prompt=enhanced_motion,
+            ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
         )
+
         if sub_clip_path and os.path.exists(sub_clip_path):
             self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
             return True
@@ -138,11 +180,23 @@ class TaskExecutor:
         num_frames = int(chunk.target_duration * self.content_cfg.fps)
         w, h = self.content_cfg.generation_resolution
         
-        # NEW: Enhance prompt before generation
         enhanced_prompt = self.t2v_module.enhance_prompt(visual_prompt)
         
+        scene = self.project_manager.get_scene_info(scene_idx)
+        ip_adapter_image_paths = []
+        if scene and scene.character_names:
+            for name in scene.character_names:
+                char = self.project_manager.get_character(name)
+                if char and os.path.exists(char.reference_image_path):
+                    ip_adapter_image_paths.append(char.reference_image_path)
+        
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_t2v.mp4")
-        sub_clip_path = self.t2v_module.generate_video_from_text(enhanced_prompt, video_path, num_frames, self.content_cfg.fps, w, h)
+        
+        sub_clip_path = self.t2v_module.generate_video_from_text(
+            enhanced_prompt, video_path, num_frames, self.content_cfg.fps, w, h,
+            ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
+        )
+
         if sub_clip_path and os.path.exists(sub_clip_path):
             self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
             return True

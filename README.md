@@ -1,3 +1,6 @@
+# setup cmd: 
+uv add torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy "huggingface-hub[cli]" hf-transfer accelerate bitsandbytes pydantic --no-build-package llvmlite llvmlite
+
 # Influencer - AI Instagram Content Generator
 
 A modular AI system that generates Instagram Reels from topics. Combines AI text, image, audio, and video generation.

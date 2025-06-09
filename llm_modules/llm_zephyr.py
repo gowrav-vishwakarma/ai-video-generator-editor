@@ -5,7 +5,7 @@ import re
 from typing import List, Optional, Tuple, Dict, Any
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from base_modules import BaseLLM, BaseModuleConfig
+from base_modules import BaseLLM, BaseModuleConfig, ModuleCapabilities
 from config_manager import ContentConfig, DEVICE, clear_vram_globally
 
 class ZephyrLLMConfig(BaseModuleConfig):
@@ -18,6 +18,14 @@ class ZephyrLLMConfig(BaseModuleConfig):
 
 class ZephyrLLM(BaseLLM):
     Config = ZephyrLLMConfig
+
+    @classmethod
+    def get_capabilities(cls) -> ModuleCapabilities:
+        return ModuleCapabilities(
+            vram_gb_min=8.0,
+            ram_gb_min=16.0,
+            # LLM-specific capabilities are not the main focus, so we use defaults.
+        )
     
     def _load_model_and_tokenizer(self):
         if self.model is None or self.tokenizer is None:
@@ -28,8 +36,8 @@ class ZephyrLLM(BaseLLM):
             
             try:
                 self.model = AutoModelForCausalLM.from_pretrained(
-                    self.config.model_id, torch_dtype=torch.float16, device_map="auto"
-                )
+                    self.config.model_id, torch_dtype=torch.float16
+                ).to(DEVICE)
             except Exception as e:
                 print(f"Failed to load LLM with device_map='auto' ({e}), trying with explicit device: {DEVICE}")
                 self.model = AutoModelForCausalLM.from_pretrained(

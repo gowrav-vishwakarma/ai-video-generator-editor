@@ -1,6 +1,6 @@
 import streamlit as st
 from task_executor import TaskExecutor
-from config_manager import ContentConfig, ModuleSelectorConfig
+from config_manager import ContentConfig
 import logging
 from typing import Optional
 import os
@@ -20,12 +20,10 @@ class UITaskExecutor:
             st.error("Cannot initialize task executor: Project state not found.")
             return
         try:
-            config_dict = self.project_manager.state.project_info["config"]
-            content_cfg = ContentConfig(**config_dict)
-            module_selector_cfg = ModuleSelectorConfig()
-            self.task_executor = TaskExecutor(self.project_manager, content_cfg, module_selector_cfg)
+            # TaskExecutor now only needs the project_manager to initialize itself
+            self.task_executor = TaskExecutor(self.project_manager)
         except Exception as e:
-            logger.error(f"Failed to initialize TaskExecutor: {e}")
+            logger.error(f"Failed to initialize TaskExecutor: {e}", exc_info=True)
             st.error(f"Configuration Error: {e}")
 
     def update_narration_text(self, scene_idx: int, text: str):
@@ -54,10 +52,12 @@ class UITaskExecutor:
 
     def regenerate_chunk_image(self, scene_idx: int, chunk_idx: int) -> bool:
         if not self.task_executor: return False
-        self.project_manager.update_chunk_content(scene_idx, chunk_idx)
-        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        image_task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk["visual_prompt"]}
-        success = self.task_executor.execute_task("generate_chunk_image", image_task_data)
+        # No need to call update_chunk_content if prompts are not changing
+        # It resets status, which is what we want for a regen.
+        self.project_manager.update_chunk_content(scene_idx, chunk_idx) 
+        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
+        task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk.visual_prompt}
+        success = self.task_executor.execute_task("generate_chunk_image", task_data)
         if success: st.toast(f"Image for Chunk {chunk_idx + 1} generated!", icon="🖼️")
         else: st.error(f"Failed to generate image for Chunk {chunk_idx + 1}.")
         self.project_manager.load_project()
@@ -65,21 +65,15 @@ class UITaskExecutor:
 
     def regenerate_chunk_video(self, scene_idx: int, chunk_idx: int) -> bool:
         if not self.task_executor: return False
+        # Also reset status for regen
         self.project_manager.update_chunk_content(scene_idx, chunk_idx)
-        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        
-        # #############################################################################
-        # # --- THE FIX IS HERE ---
-        # # We must add the `visual_prompt` to the data dictionary.
-        # #############################################################################
-        video_task_data = {
-            "scene_idx": scene_idx,
-            "chunk_idx": chunk_idx,
-            "visual_prompt": chunk["visual_prompt"], # <-- This line was missing
-            "motion_prompt": chunk.get("motion_prompt")
+        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
+        task_data = {
+            "scene_idx": scene_idx, "chunk_idx": chunk_idx,
+            "visual_prompt": chunk.visual_prompt,
+            "motion_prompt": chunk.motion_prompt
         }
-        
-        success = self.task_executor.execute_task("generate_chunk_video", video_task_data)
+        success = self.task_executor.execute_task("generate_chunk_video", task_data)
         if success: st.toast(f"Video for Chunk {chunk_idx + 1} generated!", icon="📹")
         else: st.error(f"Failed to generate video for Chunk {chunk_idx + 1}.")
         self.project_manager.load_project()
@@ -88,8 +82,8 @@ class UITaskExecutor:
     def regenerate_chunk_t2v(self, scene_idx: int, chunk_idx: int) -> bool:
         if not self.task_executor: return False
         self.project_manager.update_chunk_content(scene_idx, chunk_idx)
-        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk["visual_prompt"]}
+        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
+        task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk.visual_prompt}
         success = self.task_executor.execute_task("generate_chunk_t2v", task_data)
         if success: st.toast(f"T2V Chunk {chunk_idx + 1} generated!", icon="📹")
         else: st.error(f"Failed to generate T2V Chunk {chunk_idx + 1}.")
@@ -101,4 +95,5 @@ class UITaskExecutor:
         success = self.task_executor.execute_task("assemble_final", {})
         if success: st.toast("Final video assembled successfully!", icon="🏆")
         else: st.error("Failed to assemble final video.")
+        self.project_manager.load_project()
         return success

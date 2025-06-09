@@ -137,6 +137,83 @@ class BaseT2V(BaseVideoGen):
 
 
 
+==== utils.py ====
+# In utils.py
+from PIL import Image, ImageOps
+import streamlit as st # Keep st for st.error
+
+def load_and_correct_image_orientation(image_source):
+    """
+    Loads an image from a source (file path or uploaded file object)
+    and corrects its orientation based on EXIF data.
+    """
+    try:
+        image = Image.open(image_source)
+        # The magic is in exif_transpose
+        corrected_image = ImageOps.exif_transpose(image)
+        return corrected_image
+    except Exception as e:
+        # Using st.error here is okay for a simple app, but for true separation,
+        # you might log the error and return None, letting the caller handle the UI.
+        # For this project, this is fine.
+        st.error(f"Could not load or correct image: {e}")
+        return None
+
+
+
+==== module_discovery.py ====
+# In module_discovery.py
+
+import os
+import importlib
+import inspect
+from typing import Dict, List, Any, Type
+# Correctly import from base_modules
+from base_modules import BaseLLM, BaseTTS, BaseT2I, BaseI2V, BaseT2V, ModuleCapabilities
+
+MODULE_TYPES = {
+    "llm": {"base_class": BaseLLM, "path": "llm_modules"},
+    "tts": {"base_class": BaseTTS, "path": "tts_modules"},
+    "t2i": {"base_class": BaseT2I, "path": "t2i_modules"},
+    "i2v": {"base_class": BaseI2V, "path": "i2v_modules"},
+    "t2v": {"base_class": BaseT2V, "path": "t2v_modules"},
+}
+
+def discover_modules() -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Scans module directories, imports classes, and gets their capabilities.
+    """
+    discovered_modules = {key: [] for key in MODULE_TYPES}
+    
+    for module_type, info in MODULE_TYPES.items():
+        module_path = info["path"]
+        base_class = info["base_class"]
+        
+        if not os.path.exists(module_path):
+            continue
+            
+        for filename in os.listdir(module_path):
+            if filename.endswith(".py") and not filename.startswith("__"):
+                module_name = f"{module_path}.{filename[:-3]}"
+                try:
+                    module = importlib.import_module(module_name)
+                    for attribute_name in dir(module):
+                        attribute = getattr(module, attribute_name)
+                        if inspect.isclass(attribute) and issubclass(attribute, base_class) and attribute is not base_class:
+                            caps = attribute.get_capabilities()
+                            discovered_modules[module_type].append({
+                                "name": attribute.__name__,
+                                "path": f"{module_name}.{attribute.__name__}",
+                                "caps": caps,
+                                "class": attribute
+                            })
+                except Exception as e:
+                    print(f"Warning: Could not load module {module_name}. Error: {e}")
+                    
+    return discovered_modules
+
+
+
 ==== app.py ====
 # In app.py
 
@@ -146,16 +223,17 @@ import json
 from datetime import datetime
 import torch
 import time
-from importlib import import_module
-from typing import List
-from PIL import Image, ImageOps # <-- ADD THIS IMPORT
+from typing import List, Dict, Any
 
-# Fix for torch.classes issue if needed, though often it's better to manage environments.
+# Fix for Streamlit/Torch conflict
 torch.classes.__path__ = []
 
+# Local imports
 from project_manager import ProjectManager
-from config_manager import ContentConfig, ModuleSelectorConfig
+from config_manager import ContentConfig
 from ui_task_executor import UITaskExecutor
+from utils import load_and_correct_image_orientation
+from module_discovery import discover_modules
 
 # Page Config
 st.set_page_config(page_title="AI Video Generation Pipeline", page_icon="🎥", layout="wide")
@@ -169,27 +247,15 @@ def init_session_state():
         'ui_executor': None, 
         'speaker_audio': None, 
         'is_processing': False,
-        'new_project_characters': []
-        }
+        'new_project_characters': [],
+        'discovered_modules': discover_modules()
+    }
     for key, value in defaults.items():
         if key not in st.session_state: st.session_state[key] = value
 init_session_state()
 
-# --- NEW: Helper function to fix image orientation ---
-def load_and_correct_image_orientation(image_source):
-    """Loads an image and corrects its orientation based on EXIF data."""
-    try:
-        image = Image.open(image_source)
-        # The magic is in exif_transpose
-        corrected_image = ImageOps.exif_transpose(image)
-        return corrected_image
-    except Exception as e:
-        st.error(f"Could not load or correct image: {e}")
-        return None
-
 # Helper Functions
 def list_projects():
-    # ... (no changes) ...
     projects = []
     base_dir = "modular_reels_output"
     if not os.path.exists(base_dir): return []
@@ -210,7 +276,6 @@ def go_to_step(step_name):
     st.session_state.current_step = step_name; st.rerun()
 
 def load_project(project_name):
-    # ... (no changes) ...
     project_manager = ProjectManager(f"modular_reels_output/{project_name}")
     if project_manager.load_project():
         st.session_state.current_project = project_manager
@@ -221,8 +286,7 @@ def load_project(project_name):
         st.error("Failed to load project.")
 
 
-def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_config):
-    # ... (no changes) ...
+def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_selections):
     name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{name}_{int(time.time())}"
     
@@ -232,7 +296,8 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
         target_video_length_hint=length, 
         min_scenes=min_s, 
         max_scenes=max_s, 
-        use_svd_flow=use_svd
+        use_svd_flow=use_svd,
+        module_selections=module_selections
     )
     pm = ProjectManager(output_dir)
     pm.initialize_project(topic, cfg)
@@ -243,10 +308,13 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
             char_dir = os.path.join(output_dir, "characters", safe_name)
             os.makedirs(char_dir, exist_ok=True)
             ref_image_path = os.path.join(char_dir, "reference.png")
-            # We save the original, un-rotated image file
-            with open(ref_image_path, "wb") as f:
-                f.write(char_info['image'].getbuffer())
-            pm.add_character({"name": char_info['name'], "reference_image_path": ref_image_path})
+            
+            corrected_image = load_and_correct_image_orientation(char_info['image'])
+            if corrected_image:
+                corrected_image.save(ref_image_path, "PNG") 
+                pm.add_character({"name": char_info['name'], "reference_image_path": ref_image_path})
+            else:
+                st.error(f"Could not process image for character {char_info['name']}. Skipping.")
     
     st.session_state.current_project = pm
     st.session_state.ui_executor = UITaskExecutor(pm)
@@ -268,10 +336,21 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
         st.error("Failed to generate script.")
         st.session_state.current_project = None
 
+# --- NEW: Callback function to handle flow changes ---
+def handle_flow_change():
+    """Clears character list when flow changes, as compatibility rules change."""
+    st.session_state.new_project_characters = []
 
-# UI Rendering
 def render_project_selection():
     st.title("🎥 AI Video Generation Pipeline")
+    
+    def get_caps_from_path(mod_type: str, path: str) -> Dict[str, Any]:
+        if not path: return None
+        for mod in st.session_state.discovered_modules.get(mod_type, []):
+            if mod['path'] == path:
+                return mod['caps']
+        return None
+
     c1, c2 = st.columns([1.2, 2])
     
     with c2:
@@ -285,65 +364,123 @@ def render_project_selection():
     with c1:
         st.subheader("Create New Project")
         
-        st.subheader("1. Add Characters (Optional)")
-        for i, char in enumerate(st.session_state.new_project_characters):
-            with st.container(border=True):
-                char_c1, char_c2 = st.columns([1, 4])
-                # --- FIX 1: Use the helper function here ---
-                corrected_image = load_and_correct_image_orientation(char['image'])
-                if corrected_image:
-                    char_c1.image(corrected_image, width=64)
-                char_c2.write(f"**{char['name']}**")
-        
-        with st.expander("Add a New Character"):
-            char_name = st.text_input("Character Name", key="char_name_input")
-            char_image = st.file_uploader("Upload Character Image", type=['png', 'jpg', 'jpeg'], key="char_image_input")
-            if st.button("Add Character to Project"):
-                if char_name and char_image:
-                    st.session_state.new_project_characters.append({"name": char_name, "image": char_image})
-                    st.rerun()
-                else:
-                    st.warning("Character name and image are required.")
-        
-        st.divider()
-        st.subheader("2. Define Project Settings & Create")
+        # --- FIX: Moved radio button outside the form to allow on_change to work without form submission ---
+        st.info("Step 1: Choose your workflow and AI models.")
+        st.radio(
+            "Generation Flow",
+            ("Image to Video (High Quality)", "Text to Video (Fast)"),
+            horizontal=True,
+            key="flow_choice",
+            on_change=handle_flow_change  # This triggers a rerun on change
+        )
+        use_svd = st.session_state.flow_choice == "Image to Video (High Quality)"
+
         with st.form("new_project_form"):
+            has_characters = len(st.session_state.new_project_characters) > 0
+            module_selections = {}
+            
+            # Universal modules
+            module_selections['llm'] = st.selectbox("Language Model (LLM)", options=[m['path'] for m in st.session_state.discovered_modules.get('llm', [])], format_func=lambda x: x.split('.')[-1])
+            module_selections['tts'] = st.selectbox("Text-to-Speech Model", options=[m['path'] for m in st.session_state.discovered_modules.get('tts', [])], format_func=lambda x: x.split('.')[-1])
+
+            # Workflow-specific selections
+            show_char_section = False
+            if use_svd:
+                t2i_options = st.session_state.discovered_modules.get('t2i', [])
+                if has_characters:
+                    t2i_options = [m for m in t2i_options if m['caps'].supports_ip_adapter]
+
+                if not t2i_options and has_characters:
+                    st.error("No compatible Image Models (T2I) found for projects with characters.")
+                    module_selections['t2i'] = None
+                else:
+                    module_selections['t2i'] = st.selectbox("Image Model (T2I)", options=[m['path'] for m in t2i_options], format_func=lambda x: x.split('.')[-1])
+                
+                module_selections['i2v'] = st.selectbox("Image-to-Video Model (I2V)", options=[m['path'] for m in st.session_state.discovered_modules.get('i2v', [])], format_func=lambda x: x.split('.')[-1])
+                module_selections['t2v'] = st.session_state.discovered_modules.get('t2v', [{}])[0].get('path', None)
+                
+                t2i_caps = get_caps_from_path('t2i', module_selections.get('t2i'))
+                if t2i_caps and t2i_caps.supports_ip_adapter:
+                    show_char_section = True
+                elif t2i_caps:
+                    st.warning("This Image Model does not support characters.", icon="⚠️")
+            
+            else: # Text to Video Flow
+                t2v_options = st.session_state.discovered_modules.get('t2v', [])
+                if has_characters:
+                    t2v_options = [m for m in t2v_options if m['caps'].supports_ip_adapter]
+
+                if not t2v_options and has_characters:
+                    st.error("No compatible Text-to-Video models found for projects with characters.")
+                    module_selections['t2v'] = None
+                else:
+                    module_selections['t2v'] = st.selectbox("Text-to-Video Model (T2V)", options=[m['path'] for m in t2v_options], format_func=lambda x: x.split('.')[-1])
+
+                module_selections['t2i'] = st.session_state.discovered_modules.get('t2i', [{}])[0].get('path', None)
+                module_selections['i2v'] = st.session_state.discovered_modules.get('i2v', [{}])[0].get('path', None)
+                
+                t2v_caps = get_caps_from_path('t2v', module_selections.get('t2v'))
+                if t2v_caps and t2v_caps.supports_ip_adapter:
+                    show_char_section = True
+                elif t2v_caps:
+                    st.warning("This Text-to-Video model does not support characters.", icon="⚠️")
+
+            st.divider()
+            st.info("Step 2: Define your project topic and content.")
             topic = st.text_area("Video Topic")
             
-            st.write("**Content Settings**")
-            flow = st.radio("Flow", ("Image to Video (High Quality)", "Text to Video (Fast)"), horizontal=True)
-            use_svd = "Image to Video" in flow
             col1, col2 = st.columns(2)
             fmt = col1.selectbox("Format", ("Portrait", "Landscape"), index=0)
             length = col2.number_input("Length (s)", min_value=5, value=20, step=5)
-            st.write("Scene Count:")
             c1_s, c2_s = st.columns(2)
-            min_s = c1_s.number_input("Min", 1, 10, 2, 1)
-            max_s = c2_s.number_input("Max", min_s, 10, 5, 1)
+            min_s = c1_s.number_input("Min Scenes", 1, 10, 2, 1)
+            max_s = c2_s.number_input("Max Scenes", min_s, 10, 5, 1)
             auto = st.checkbox("Automatic Mode", value=True)
             audio = st.file_uploader("Reference Speaker Audio (Optional, .wav)", type=['wav'])
 
-            st.write("**Model Selection** (Read-only for now)")
-            module_cfg = ModuleSelectorConfig()
-            t2i_choice = st.selectbox("Image Model", [module_cfg.t2i_module.split('.')[-1]], disabled=True)
-            i2v_choice = st.selectbox("Image-to-Video Model", [module_cfg.i2v_module.split('.')[-1]], disabled=True, help="Used in Image-to-Video flow")
-            t2v_choice = st.selectbox("Text-to-Video Model", [module_cfg.t2v_module.split('.')[-1]], disabled=True, help="Used in Text-to-Video flow")
-            module_selections = {"t2i": t2i_choice, "i2v": i2v_choice, "t2v": t2v_choice}
-
-            if st.form_submit_button("Create & Start Project", type="primary"):
-                if not topic: 
+            submitted = st.form_submit_button("Create & Start Project", type="primary")
+            if submitted:
+                if not all(module_selections.values()):
+                    st.error("A required module is missing or could not be selected. Please check your selections.")
+                elif not topic: 
                     st.error("Topic required.")
-                else: 
-                    create_new_project(
-                        topic, auto, audio, fmt, length, min_s, max_s, use_svd,
-                        st.session_state.new_project_characters,
-                        module_selections
-                    )
+                else:
+                    final_chars = st.session_state.new_project_characters if show_char_section else []
+                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections)
+        
+        st.divider()
+        st.subheader("Add Characters (Optional)")
+        if show_char_section:
+            st.caption("Add characters to use for consistent generation.")
+            for i, char in enumerate(st.session_state.new_project_characters):
+                with st.container(border=True):
+                    char_c1, char_c2 = st.columns([1, 4])
+                    corrected_image = load_and_correct_image_orientation(char['image'])
+                    if corrected_image: char_c1.image(corrected_image, width=64)
+                    char_c2.write(f"**{char['name']}**")
+            
+            with st.expander("Add a New Character"):
+                with st.form("add_character_form", clear_on_submit=True):
+                    char_name = st.text_input("Character Name")
+                    char_image = st.file_uploader("Upload Character Image", type=['png', 'jpg', 'jpeg'])
+                    
+                    if st.form_submit_button("Add Character to Project"):
+                        if char_name and char_image:
+                            st.session_state.new_project_characters.append({"name": char_name, "image": char_image})
+                            st.rerun()
+                        else:
+                            st.warning("Character name and image are required.")
+        else:
+            st.info("The selected model workflow does not support character consistency. Please select a different model above to enable this feature.")
+            if st.session_state.new_project_characters:
+                st.session_state.new_project_characters = []
+
 
 def render_processing_dashboard():
     project = st.session_state.current_project
     ui_executor = st.session_state.ui_executor
-    # ... (no changes to the start of this function) ...
+    
+    supports_characters = ui_executor.task_executor.active_flow_supports_characters
     use_svd_flow = project.state.project_info.config.get("use_svd_flow", True)
 
     st.title(f"🎬 Project: {project.state.project_info.topic}")
@@ -359,45 +496,39 @@ def render_processing_dashboard():
         st.session_state.auto_mode = st.toggle("Automatic Mode", value=st.session_state.auto_mode, disabled=st.session_state.is_processing)
     st.divider()
 
-
-    with st.expander("👤 Project Characters & Subjects", expanded=True):
-        if not project.state.characters:
-            st.info("No characters defined. Add one to use features like IP-Adapter for consistency.")
+    if supports_characters:
+        with st.expander("👤 Project Characters & Subjects", expanded=True):
+            if not project.state.characters:
+                st.info("No characters defined. Add one to use features like IP-Adapter for consistency.")
             
-        for char in project.state.characters:
-            with st.container(border=True):
-                c1, c2 = st.columns([1, 3])
-                with c1:
-                    # --- FIX 2: Use the helper function here too ---
-                    corrected_image = load_and_correct_image_orientation(char.reference_image_path)
-                    if corrected_image:
-                        st.image(corrected_image, caption=char.name, use_container_width=True)
+            for char in project.state.characters:
+                with st.container(border=True):
+                    c1_char, c2_char = st.columns([1, 3])
+                    with c1_char:
+                        corrected_image = load_and_correct_image_orientation(char.reference_image_path)
+                        if corrected_image: st.image(corrected_image, caption=char.name, use_container_width=True)
+                    with c2_char:
+                        with st.popover("Edit Character", use_container_width=True):
+                            with st.form(f"edit_char_{char.name}"):
+                                st.write(f"Editing: **{char.name}**")
+                                new_name = st.text_input("New Name", value=char.name)
+                                new_image = st.file_uploader("Upload New Image", type=['png', 'jpg', 'jpeg'], key=f"edit_img_{char.name}")
+                                if st.form_submit_button("Save", type="primary"):
+                                    ui_executor.update_character(char.name, new_name, new_image); st.rerun()
+                        if st.button("Delete Character", key=f"del_char_{char.name}", type="secondary", use_container_width=True):
+                            ui_executor.delete_character(char.name); st.rerun()
 
-                with c2:
-                    with st.popover("Edit Character", use_container_width=True):
-                        with st.form(f"edit_char_{char.name}"):
-                            st.write(f"Editing: **{char.name}**")
-                            new_name = st.text_input("New Name", value=char.name)
-                            new_image = st.file_uploader("Upload New Image", type=['png', 'jpg', 'jpeg'], key=f"edit_img_{char.name}")
-                            if st.form_submit_button("Save", type="primary"):
-                                ui_executor.update_character(char.name, new_name, new_image)
-                                st.rerun()
-                    
-                    if st.button("Delete Character", key=f"del_char_{char.name}", type="secondary", use_container_width=True):
-                        ui_executor.delete_character(char.name)
-                        st.rerun()
+            with st.form("add_new_character_dashboard"):
+                st.subheader("Add New Character")
+                name = st.text_input("Character Name")
+                image = st.file_uploader("Upload Reference Image", type=['png', 'jpg', 'jpeg'])
+                if st.form_submit_button("Add Character", type="primary"):
+                    if name and image:
+                        ui_executor.add_character(name, image); st.rerun()
+                    else: st.error("Name and image are required.")
+    else:
+        st.info("This project's workflow and selected models do not support character consistency (IP-Adapter).")
 
-        with st.form("add_new_character_dashboard"):
-            st.subheader("Add New Character")
-            name = st.text_input("Character Name")
-            image = st.file_uploader("Upload Reference Image", type=['png', 'jpg', 'jpeg'])
-            if st.form_submit_button("Add Character", type="primary"):
-                if name and image:
-                    ui_executor.add_character(name, image)
-                    st.rerun()
-                else: st.error("Name and image are required.")
-    
-    # ... (The rest of the file from here is unchanged and correct) ...
     st.subheader("Content Generation Dashboard")
     with st.expander("Reference Speaker Audio"):
         uploaded_file = st.file_uploader("Upload New Speaker Audio (.wav)", key="speaker_upload", disabled=st.session_state.is_processing)
@@ -409,7 +540,7 @@ def render_processing_dashboard():
             st.write("Current audio:"); st.audio(st.session_state.speaker_audio)
         else:
             st.info("No reference audio provided.")
-    
+
     next_task_name, next_task_data = project.get_next_pending_task()
     if (next_task_name == "assemble_final") or (next_task_name is None):
         if st.button("Assemble / View Final Video ➡️", type="primary"): go_to_step('video_assembly')
@@ -418,23 +549,21 @@ def render_processing_dashboard():
     for i, part in enumerate(project.state.script.narration_parts):
         with st.container(border=True):
             st.header(f"Scene {i+1}")
-            # --- Assign Characters to Scene ---
-            scene = project.get_scene_info(i)
-            if scene and project.state.characters:
-                all_char_names = [c.name for c in project.state.characters]
-                selected_chars = st.multiselect(
-                    "Characters in this Scene",
-                    options=all_char_names,
-                    default=scene.character_names,
-                    key=f"scene_chars_{i}",
-                    help="Select characters to feature. This will use their reference image for generation."
-                )
-                if selected_chars != scene.character_names:
-                    ui_executor.update_scene_characters(i, selected_chars)
-                    st.rerun()
+            if supports_characters:
+                scene = project.get_scene_info(i)
+                if scene and project.state.characters:
+                    all_char_names = [c.name for c in project.state.characters]
+                    selected_chars = st.multiselect(
+                        "Characters in this Scene",
+                        options=all_char_names,
+                        default=scene.character_names,
+                        key=f"scene_chars_{i}",
+                        help="Select characters to feature. This will use their reference image for generation."
+                    )
+                    if selected_chars != scene.character_names:
+                        ui_executor.update_scene_characters(i, selected_chars); st.rerun()
             
             st.subheader("Narration")
-
             new_text = st.text_area("Script", part.text, key=f"text_{i}", height=100, label_visibility="collapsed", disabled=st.session_state.is_processing)
             if new_text != part.text: ui_executor.update_narration_text(i, new_text); st.rerun()
 
@@ -504,13 +633,13 @@ def render_processing_dashboard():
             if success:
                 fresh_pm = ProjectManager(st.session_state.current_project.output_dir); fresh_pm.load_project()
                 st.session_state.current_project = fresh_pm
-                st.session_state.ui_executor = UITaskExecutor(fresh_pm) # Re-init with fresh state
+                st.session_state.ui_executor = UITaskExecutor(fresh_pm)
                 st.rerun()
             else:
                 st.error(f"❌ Failed on: {next_task_name}. Stopping."); st.session_state.is_processing = False; st.rerun()
 
+
 def render_video_assembly():
-    # ... (no changes) ...
     st.title("Final Video Assembly")
     project = st.session_state.current_project
     if st.button("⬅️ Back to Dashboard"): go_to_step('processing_dashboard')
@@ -853,9 +982,9 @@ import torch
 from importlib import import_module
 
 from project_manager import ProjectManager, STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED, STATUS_FAILED
-from config_manager import ContentConfig, ModuleSelectorConfig
+from config_manager import ContentConfig
 from video_assembly import assemble_final_reel, assemble_scene_video_from_sub_clips
-from base_modules import BaseModuleConfig # This might not be used directly here but good to keep
+from base_modules import ModuleCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -868,27 +997,44 @@ class TaskExecutor:
     def __init__(self, project_manager: ProjectManager):
         self.project_manager = project_manager
         self.content_cfg = ContentConfig(**self.project_manager.state.project_info.config)
-        module_selector_cfg = ModuleSelectorConfig()
+        
+        module_selections = self.content_cfg.module_selections
+        if not module_selections:
+            raise ValueError("Project state is missing module selections. Cannot initialize TaskExecutor.")
 
-        LlmClass = _import_class(module_selector_cfg.llm_module)
+        LlmClass = _import_class(module_selections["llm"])
         self.llm_module = LlmClass(LlmClass.Config())
         
-        TtsClass = _import_class(module_selector_cfg.tts_module)
+        TtsClass = _import_class(module_selections["tts"])
         self.tts_module = TtsClass(TtsClass.Config())
 
-        T2iClass = _import_class(module_selector_cfg.t2i_module)
+        T2iClass = _import_class(module_selections["t2i"])
         self.t2i_module = T2iClass(T2iClass.Config())
 
-        I2vClass = _import_class(module_selector_cfg.i2v_module)
+        I2vClass = _import_class(module_selections["i2v"])
         self.i2v_module = I2vClass(I2vClass.Config())
 
-        T2vClass = _import_class(module_selector_cfg.t2v_module)
+        T2vClass = _import_class(module_selections["t2v"])
         self.t2v_module = T2vClass(T2vClass.Config())
+        
+        # --- REFACTORED: Corrected Holistic Capability Check ---
+        self.active_flow_supports_characters: bool
+        if self.content_cfg.use_svd_flow:
+            # For I2V flow, ONLY the T2I module MUST support characters.
+            t2i_caps = self.t2i_module.get_capabilities()
+            self.active_flow_supports_characters = t2i_caps.supports_ip_adapter
+            print("Decisive module for character support: T2I module.")
+        else:
+            # For T2V flow, only the T2V module matters.
+            t2v_caps = self.t2v_module.get_capabilities()
+            self.active_flow_supports_characters = t2v_caps.supports_ip_adapter
+            print("Decisive module for character support: T2V module.")
+        
+        print(f"Holistic check: Active flow supports characters: {self.active_flow_supports_characters}")
         
         self._configure_from_model_capabilities()
 
     def _configure_from_model_capabilities(self):
-        # ... this method is unchanged ...
         print("--- TaskExecutor: Configuring run from model capabilities... ---")
         if self.content_cfg.use_svd_flow:
             t2i_caps = self.t2i_module.get_model_capabilities()
@@ -954,7 +1100,6 @@ class TaskExecutor:
         
         enhanced_prompt = self.t2i_module.enhance_prompt(visual_prompt)
         
-        # --- Get character images for IP-Adapter ---
         scene = self.project_manager.get_scene_info(scene_idx)
         ip_adapter_image_paths = []
         if scene and scene.character_names:
@@ -964,11 +1109,8 @@ class TaskExecutor:
                 if char and os.path.exists(char.reference_image_path):
                     ip_adapter_image_paths.append(char.reference_image_path)
         
-        # --- Pass paths to the module ---
         self.t2i_module.generate_image(
-            enhanced_prompt, 
-            path, 
-            w, h, 
+            enhanced_prompt, path, w, h, 
             ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
         )
         
@@ -983,11 +1125,9 @@ class TaskExecutor:
         enhanced_visual = self.i2v_module.enhance_prompt(visual_prompt, "visual")
         enhanced_motion = self.i2v_module.enhance_prompt(motion_prompt, "motion")
 
-        # --- NEW: Get character images for IP-Adapter ---
         scene = self.project_manager.get_scene_info(scene_idx)
         ip_adapter_image_paths = []
         if scene and scene.character_names:
-            print(f"Found characters for Scene {scene_idx}: {scene.character_names}")
             for name in scene.character_names:
                 char = self.project_manager.get_character(name)
                 if char and os.path.exists(char.reference_image_path):
@@ -995,7 +1135,6 @@ class TaskExecutor:
 
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4")
         
-        # --- NEW: Pass paths to the module ---
         sub_clip_path = self.i2v_module.generate_video_from_image(
             image_path=chunk.keyframe_image_path, 
             output_video_path=video_path, 
@@ -1018,11 +1157,9 @@ class TaskExecutor:
         
         enhanced_prompt = self.t2v_module.enhance_prompt(visual_prompt)
         
-        # --- NEW: Get character images for IP-Adapter ---
         scene = self.project_manager.get_scene_info(scene_idx)
         ip_adapter_image_paths = []
         if scene and scene.character_names:
-            print(f"Found characters for Scene {scene_idx}: {scene.character_names}")
             for name in scene.character_names:
                 char = self.project_manager.get_character(name)
                 if char and os.path.exists(char.reference_image_path):
@@ -1030,13 +1167,8 @@ class TaskExecutor:
         
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_t2v.mp4")
         
-        # --- NEW: Pass paths to the module ---
         sub_clip_path = self.t2v_module.generate_video_from_text(
-            enhanced_prompt, 
-            video_path, 
-            num_frames, 
-            self.content_cfg.fps, 
-            w, h,
+            enhanced_prompt, video_path, num_frames, self.content_cfg.fps, w, h,
             ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
         )
 
@@ -1080,18 +1212,23 @@ class TaskExecutor:
 
 
 ==== ui_task_executor.py ====
+# In ui_task_executor.py
+
 import streamlit as st
 from task_executor import TaskExecutor
 from config_manager import ContentConfig
 import logging
 from typing import List, Optional
 import os
+# --- FIX: Import the helper function from app.py ---
+from utils import load_and_correct_image_orientation
 
 logger = logging.getLogger(__name__)
 
 class UITaskExecutor:
     """Handles task execution triggered from the Streamlit UI, providing user feedback."""
     
+    # ... (no changes to __init__ or other methods) ...
     def __init__(self, project_manager):
         self.project_manager = project_manager
         self.task_executor: Optional[TaskExecutor] = None
@@ -1186,12 +1323,18 @@ class UITaskExecutor:
         char_dir = os.path.join(self.project_manager.output_dir, "characters", safe_name)
         os.makedirs(char_dir, exist_ok=True)
         ref_image_path = os.path.join(char_dir, "reference.png")
-        with open(ref_image_path, "wb") as f:
-            f.write(image_file.getbuffer())
-        char_data = {"name": name, "reference_image_path": ref_image_path}
-        self.project_manager.add_character(char_data)
-        st.toast(f"Character '{name}' added!", icon="👤")
-        return True
+        
+        # --- FIX: Correct orientation before saving ---
+        corrected_image = load_and_correct_image_orientation(image_file)
+        if corrected_image:
+            corrected_image.save(ref_image_path, "PNG")
+            char_data = {"name": name, "reference_image_path": ref_image_path}
+            self.project_manager.add_character(char_data)
+            st.toast(f"Character '{name}' added!", icon="👤")
+            return True
+        else:
+            st.error(f"Could not process image for new character {name}. Aborting.")
+            return False
 
     def update_character(self, old_name: str, new_name: str, new_image_file: Optional["UploadedFile"]):
         ref_image_path = None
@@ -1200,8 +1343,15 @@ class UITaskExecutor:
             char_dir = os.path.join(self.project_manager.output_dir, "characters", safe_name)
             os.makedirs(char_dir, exist_ok=True)
             ref_image_path = os.path.join(char_dir, "reference.png")
-            with open(ref_image_path, "wb") as f:
-                f.write(new_image_file.getbuffer())
+
+            # --- FIX: Correct orientation before saving the new image ---
+            corrected_image = load_and_correct_image_orientation(new_image_file)
+            if corrected_image:
+                corrected_image.save(ref_image_path, "PNG")
+            else:
+                # If image processing fails, don't update the image path.
+                st.error("Failed to process the new image. Character image was not updated.")
+                ref_image_path = None 
 
         self.project_manager.update_character(old_name, new_name, ref_image_path)
         st.toast(f"Character '{old_name}' updated!", icon="✏️")
@@ -1224,7 +1374,7 @@ import os
 import torch
 import gc
 from pydantic import BaseModel, Field
-from typing import Tuple, Literal
+from typing import Dict, Tuple, Literal
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 if DEVICE == "cuda": os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -1237,6 +1387,8 @@ class ContentConfig(BaseModel):
     max_scenes: int = 5
     aspect_ratio_format: Literal["Portrait", "Landscape"] = "Portrait"
     use_svd_flow: bool = True
+    # --- NEW: To be filled from UI selections ---
+    module_selections: Dict[str, str] = Field(default_factory=dict)
 
     # --- Static project-wide settings ---
     fps: int = 24
@@ -1249,42 +1401,26 @@ class ContentConfig(BaseModel):
 
     @property
     def max_scene_narration_duration_hint(self) -> float:
-        """Calculates an ideal narration length per scene based on total length and scene count."""
         if self.max_scenes > 0 and self.min_scenes > 0:
             avg_scenes = (self.min_scenes + self.max_scenes) / 2
             return round(self.target_video_length_hint / avg_scenes, 1)
-        return 6.0 # A safe fallback if scene counts are zero
+        return 6.0
 
     @property
     def final_output_resolution(self) -> Tuple[int, int]:
-        """Calculates final resolution based on the simplified aspect ratio format."""
         if self.aspect_ratio_format == "Landscape":
             return (1920, 1080)
-        return (1080, 1920) # Default to Portrait
+        return (1080, 1920)
 
     def __init__(self, **data):
         super().__init__(**data)
         os.makedirs(self.output_dir, exist_ok=True)
-        print(f"--- Project Config Initialized ---")
-        print(f"Flow: {'T2I -> I2V (SVD)' if self.use_svd_flow else 'Direct T2V'}")
-        print(f"Format: {self.aspect_ratio_format}")
-        print(f"Initial Generation Resolution: {self.generation_resolution}")
-        print(f"Initial Max Chunk Duration: {self.model_max_video_chunk_duration}s")
-        print(f"---------------------------------")
 
-
-class ModuleSelectorConfig(BaseModel):
-    llm_module: str = "llm_modules.llm_zephyr.ZephyrLLM"
-    tts_module: str = "tts_modules.tts_coqui.CoquiTTSModule"
-    t2i_module: str = "t2i_modules.t2i_juggernaut.JuggernautT2I"
-    i2v_module: str = "i2v_modules.i2v_ltx.LtxI2V"
-    # t2v_module: str = "t2v_modules.t2v_zeroscope.ZeroscopeT2V"
-    t2v_module: str = "t2v_modules.t2v_ltx.LtxT2V"
 
 def clear_vram_globally(*items_to_del):
     print(f"Attempting to clear VRAM. Received {len(items_to_del)} items to delete.")
     for item in items_to_del:
-        if hasattr(item, 'to') and hasattr(item, 'dtype') and item.dtype != torch.float16: # <-- ADDED CHECK
+        if hasattr(item, 'to') and hasattr(item, 'dtype') and item.dtype != torch.float16:
             try:
                 item.to('cpu')
             except Exception as e:
@@ -1929,6 +2065,10 @@ class JuggernautT2IConfig(BaseModuleConfig):
     refiner_id: Optional[str] = None
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
+    ip_adapter_repo: str = "h94/IP-Adapter"
+    ip_adapter_subfolder: str = "sdxl_models"
+    ip_adapter_weight_name: str = "ip-adapter_sdxl.bin"
+
 
 class JuggernautT2I(BaseT2I):
     Config = JuggernautT2IConfig
@@ -1936,6 +2076,7 @@ class JuggernautT2I(BaseT2I):
     def __init__(self, config: JuggernautT2IConfig):
         super().__init__(config)
         self.refiner_pipe = None
+        self._loaded_ip_adapter_count = 0
     
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
@@ -1956,16 +2097,14 @@ class JuggernautT2I(BaseT2I):
             "max_chunk_duration": 3.0 
         }
 
-
     def _load_pipeline(self):
         if self.pipe is None:
             print(f"Loading T2I pipeline (Juggernaut): {self.config.model_id}... to {DEVICE}")
             self.pipe = StableDiffusionXLPipeline.from_pretrained(
-                self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True, device_map="balanced"
+                self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True, device_map="balanced" 
             )
             print("Juggernaut Base pipeline loaded.")
             if self.config.refiner_id:
-                # This part is simplified as Juggernaut doesn't typically use a refiner
                 print(f"Refiner specified but not typically used with Juggernaut, skipping load.")
 
     def clear_vram(self):
@@ -1973,30 +2112,57 @@ class JuggernautT2I(BaseT2I):
         models = [m for m in [self.pipe, self.refiner_pipe] if m is not None]
         if models: clear_vram_globally(*models)
         self.pipe, self.refiner_pipe = None, None
+        self._loaded_ip_adapter_count = 0
         print("T2I (Juggernaut) VRAM cleared.")
 
     def generate_image(self, prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         self._load_pipeline()
         
         pipeline_kwargs = {}
-        # --- MODIFIED IP-ADAPTER LOGIC with better logging ---
-        print(f"Juggernaut T2I: IP-Adapter image: {ip_adapter_image}")
+        ip_images_to_load = []
+
         if ip_adapter_image:
-            print(f"Juggernaut T2I: Activating IP-Adapter with {len(ip_adapter_image)} character image(s).")
-            if not hasattr(self.pipe, '_ip_adapter_loaded'):
-                print("Loading IP-Adapter weights for Juggernaut pipeline...")
-                self.pipe.load_ip_adapter("h94/IP-Adapter", subfolder="sdxl_models", weight_name="ip-adapter_sdxl.bin")
-                self.pipe.set_ip_adapter_scale(0.7)
-                self.pipe._ip_adapter_loaded = True
-            
             if isinstance(ip_adapter_image, str):
-                ip_images = [load_image(ip_adapter_image)]
+                ip_images_to_load = [ip_adapter_image]
             else:
-                ip_images = [load_image(p) for p in ip_adapter_image]
-            
+                ip_images_to_load = ip_adapter_image
+        
+        num_ip_images = len(ip_images_to_load)
+
+        if num_ip_images > 0:
+            print(f"Juggernaut T2I: Activating IP-Adapter with {num_ip_images} character image(s).")
+
+            if self._loaded_ip_adapter_count != num_ip_images:
+                print(f"Loading {num_ip_images} IP-Adapter(s) for the pipeline...")
+                
+                if hasattr(self.pipe, "unload_ip_adapter"):
+                    self.pipe.unload_ip_adapter()
+
+                adapter_weights = [self.config.ip_adapter_weight_name] * num_ip_images
+                
+                self.pipe.load_ip_adapter(
+                    self.config.ip_adapter_repo, 
+                    subfolder=self.config.ip_adapter_subfolder, 
+                    weight_name=adapter_weights
+                )
+                self._loaded_ip_adapter_count = num_ip_images
+                print(f"Successfully loaded {self._loaded_ip_adapter_count} adapters.")
+
+            # --- THE FIX IS HERE ---
+            # Create a list of scales, one for each adapter.
+            scales = [0.6] * num_ip_images
+            print(f"Setting IP-Adapter scales to: {scales}")
+            self.pipe.set_ip_adapter_scale(scales) 
+
+            ip_images = [load_image(p) for p in ip_images_to_load]
             pipeline_kwargs["ip_adapter_image"] = ip_images
         else:
             print("Juggernaut T2I: No IP-Adapter image provided. Generating from text prompt only.")
+            if self._loaded_ip_adapter_count > 0:
+                 if hasattr(self.pipe, "unload_ip_adapter"):
+                    self.pipe.unload_ip_adapter()
+                 self._loaded_ip_adapter_count = 0
+
         
         print(f"Juggernaut generating image with resolution: {width}x{height} for prompt: '{prompt}'")
         
@@ -2018,7 +2184,7 @@ class JuggernautT2I(BaseT2I):
 ==== t2i_modules/t2i_sdxl.py ====
 # t2i_modules/t2i_sdxl.py
 import torch
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
 
 from base_modules import BaseT2I, BaseModuleConfig, ModuleCapabilities
@@ -2082,8 +2248,11 @@ class SdxlT2I(BaseT2I):
         self.pipe, self.refiner_pipe = None, None
         print("T2I (SDXL) VRAM cleared.")
 
-    def generate_image(self, prompt: str, output_path: str, width: int, height: int) -> str:
+    def generate_image(self, prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         self._load_pipeline()
+
+        if ip_adapter_image:
+            print("Warning: SDXLT2I module received IP-Adapter image but does not currently implement its use.")
         
         kwargs = {
             "prompt": prompt, "width": width, "height": height,
@@ -2146,7 +2315,7 @@ class LtxI2V(BaseI2V):
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (480, 704), "Landscape": (704, 480)},
-            "max_chunk_duration": 5 
+            "max_chunk_duration": 4 
         }
     
     def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
@@ -2216,7 +2385,7 @@ class LtxI2V(BaseI2V):
 ==== i2v_modules/i2v_svd.py ====
 # i2v_modules/i2v_svd.py
 import torch
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Union
 from diffusers import StableVideoDiffusionPipeline
 from diffusers.utils import load_image, export_to_video
 from PIL import Image
@@ -2251,7 +2420,7 @@ class SvdI2V(BaseI2V):
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (576, 1024), "Landscape": (1024, 576)},
-            "max_chunk_duration": 3.0 
+            "max_chunk_duration": 2.0 
         }
         
     def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
@@ -2285,8 +2454,11 @@ class SvdI2V(BaseI2V):
         background.paste(resized_image, ((target_width - new_width) // 2, (target_height - new_height) // 2))
         return background
 
-    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str]) -> str:
+    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str], ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         self._load_pipeline()
+
+        if ip_adapter_image:
+            print("Warning: SvdI2V module received IP-Adapter image but does not currently implement its use.")
 
         input_image = load_image(image_path)
         svd_target_res = self.get_model_capabilities()["resolutions"]
@@ -2328,142 +2500,106 @@ from .t2v_zeroscope import ZeroscopeT2V
 ==== t2v_modules/t2v_ltx.py ====
 # In t2v_modules/t2v_ltx.py
 import torch
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Union
+import os
 
-# --- Import the necessary pipelines and configs for quantization ---
+# --- Import the necessary pipelines and configs ---
 from diffusers import LTXPipeline, LTXVideoTransformer3DModel
 from diffusers.utils import export_to_video
-# We need both transformers' and diffusers' BitsAndBytesConfig for this specific model
 from transformers import T5EncoderModel, BitsAndBytesConfig as TransformersBitsAndBytesConfig
 from diffusers import BitsAndBytesConfig as DiffusersBitsAndBytesConfig
-
 
 from base_modules import BaseT2V, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally
 
 class LtxT2VConfig(BaseModuleConfig):
-    """
-    Configuration for the Lightricks LTX Text-to-Video model.
-    Includes a flag to enable memory-saving 8-bit quantization.
-    """
     model_id: str = "Lightricks/LTX-Video" 
     use_8bit_quantization: bool = True
     num_inference_steps: int = 50
     guidance_scale: float = 7.5
     decode_timestep: float = 0.03
     decode_noise_scale: float = 0.025
+    # No IP-Adapter configs needed as this pipeline doesn't support them
 
 class LtxT2V(BaseT2V):
-    """
-    Implements Text-to-Video generation using the LTXPipeline,
-    with support for 8-bit quantization to save VRAM.
-    """
     Config = LtxT2VConfig
+
+    # No __init__ needed if we just have the default behavior
 
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
+        """This module is for pure T2V and does NOT support IP-Adapters."""
         return ModuleCapabilities(
             vram_gb_min=8.0,
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],
-            supports_ip_adapter=True,
-            supports_lora=True, # Juggernaut is a fine-tune, can easily use LoRAs
-            max_subjects=2, # Can handle one or two IP adapter images
+            # --- THE CRITICAL CHANGE: Be honest about capabilities ---
+            supports_ip_adapter=False,
+            supports_lora=False, # This pipeline doesn't have a LoRA loader either
+            max_subjects=0, 
             accepts_text_prompt=True,
             accepts_negative_prompt=True
         )
-
     
     def get_model_capabilities(self) -> Dict[str, Any]:
-        """Returns the optimal final output resolutions."""
-        return {
-            "resolutions": {
-                "Portrait": (512, 768), 
-                "Landscape": (768, 512)
-            },
-            "max_chunk_duration": 5.0
-        }
+        return {"resolutions": {"Portrait": (512, 768), "Landscape": (768, 512)}, "max_chunk_duration": 5.0}
 
     def _load_pipeline(self):
-        """
-        Loads the LTX pipeline. If quantization is enabled, it loads the
-        heavy components in 8-bit to save significant VRAM.
-        """
-        if self.pipe is not None:
-            return
+        if self.pipe is not None: return
 
         if self.config.use_8bit_quantization:
             print(f"Loading T2V pipeline ({self.config.model_id}) with 8-bit quantization...")
-
-            # 1. Define the quantization config for the T5 text_encoder (from transformers)
             text_encoder_quant_config = TransformersBitsAndBytesConfig(load_in_8bit=True)
-
-            # 2. Load the heavy text encoder with its quantization config
-            text_encoder_8bit = T5EncoderModel.from_pretrained(
-                self.config.model_id,
-                subfolder="text_encoder",
-                quantization_config=text_encoder_quant_config,
-                torch_dtype=torch.float16, # It's good practice to set dtype even when quantizing
-            )
-
-            # 3. Define the quantization config for the Transformer (from diffusers)
+            text_encoder_8bit = T5EncoderModel.from_pretrained(self.config.model_id, subfolder="text_encoder", quantization_config=text_encoder_quant_config, torch_dtype=torch.float16)
             transformer_quant_config = DiffusersBitsAndBytesConfig(load_in_8bit=True)
-
-            # 4. Load the even heavier video transformer with its quantization config
-            transformer_8bit = LTXVideoTransformer3DModel.from_pretrained(
-                self.config.model_id,
-                subfolder="transformer",
-                quantization_config=transformer_quant_config,
-                torch_dtype=torch.float16,
-            )
-
-            # 5. Assemble the final pipeline from the quantized components.
-            #    As per the traceback and docs, this pipeline requires 'balanced' for device_map
-            #    when loading components manually.
+            transformer_8bit = LTXVideoTransformer3DModel.from_pretrained(self.config.model_id, subfolder="transformer", quantization_config=transformer_quant_config, torch_dtype=torch.float16)
+            
+            # Note: We are no longer passing the `image_encoder` as it was being ignored.
             self.pipe = LTXPipeline.from_pretrained(
                 self.config.model_id,
                 text_encoder=text_encoder_8bit,
                 transformer=transformer_8bit,
                 torch_dtype=torch.float16,
-                device_map="balanced", # <-- THE FIX: Use 'balanced' instead of 'auto'
+                device_map="balanced",
             )
-            print("Quantized T2V pipeline loaded successfully with 'balanced' device map.")
-
+            print("Quantized T2V pipeline loaded successfully.")
         else:
-            # Original, non-quantized loading path
             print(f"Loading T2V pipeline ({self.config.model_id}) in full precision...")
             self.pipe = LTXPipeline.from_pretrained(
-                self.config.model_id, 
-                torch_dtype=torch.bfloat16 # Use bfloat16 for full precision as recommended
+                self.config.model_id,
+                torch_dtype=torch.bfloat16
             )
-            # enable_model_cpu_offload is an alternative for non-quantized loading
             self.pipe.enable_model_cpu_offload()
 
-        # VAE tiling is beneficial in both cases for memory efficiency during decoding
         self.pipe.vae.enable_tiling()
         print("VAE tiling enabled for memory efficiency.")
 
     def clear_vram(self):
-        """Clears the VRAM used by the LTX pipeline."""
         print(f"Clearing T2V (LTX) VRAM...")
-        if self.pipe is not None: 
-            # When using device_map, accelerate handles the model parts.
-            # Setting to None and calling gc is the main way to clear.
-            clear_vram_globally(self.pipe, self.pipe.text_encoder, self.pipe.transformer)
+        if self.pipe is not None:
+            clear_vram_globally(self.pipe)
         self.pipe = None
         print("T2V (LTX) VRAM cleared.")
 
     def generate_video_from_text(
-        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int
+        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None
     ) -> str:
-        """Generates a video directly from a text prompt using the loaded LTXPipeline."""
         self._load_pipeline()
+
+        # --- THE GRACEFUL HANDLING ---
+        # If character images are passed, inform the user they are being ignored.
+        if ip_adapter_image:
+            print("="*50)
+            print("WARNING: The LtxT2V module does not support IP-Adapters for character consistency.")
+            print("The provided character images will be ignored for this T2V generation.")
+            print("="*50)
+        
+        # All IP-Adapter logic is removed. We just call the pipeline.
+        pipeline_kwargs = {}
         
         negative_prompt = "worst quality, inconsistent motion, blurry, jittery, distorted, text, watermark, bad anatomy"
-        
         print(f"Generating LTX T2V ({width}x{height}) for prompt: \"{prompt[:50]}...\"")
         
-        # The LTX pipeline call is correct and doesn't need changes
         video_frames = self.pipe(
             prompt=prompt,
             negative_prompt=negative_prompt,
@@ -2473,7 +2609,8 @@ class LtxT2V(BaseT2V):
             num_inference_steps=self.config.num_inference_steps,
             guidance_scale=self.config.guidance_scale,
             decode_timestep=self.config.decode_timestep,
-            decode_noise_scale=self.config.decode_noise_scale
+            decode_noise_scale=self.config.decode_noise_scale,
+            **pipeline_kwargs
         ).frames[0]
         
         export_to_video(video_frames, output_video_path, fps=fps)
@@ -2486,7 +2623,7 @@ class LtxT2V(BaseT2V):
 ==== t2v_modules/t2v_zeroscope.py ====
 # In t2v_modules/t2v_zeroscope.py
 import torch
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Union
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.utils import export_to_video
 
@@ -2553,10 +2690,13 @@ class ZeroscopeT2V(BaseT2V):
         print("T2V VRAM cleared.")
 
     def generate_video_from_text(
-        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int
+        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None
     ) -> str:
         self._load_pipeline()
         
+        if ip_adapter_image:
+            print("Warning: ZeroscopeT2V module received IP-Adapter image but does not currently implement its use.")
+
         negative_prompt = "blurry, low quality, watermark, bad anatomy, text, letters, distorted"
         
         print(f"Stage 1: Generating T2V ({width}x{height}) for prompt: \"{prompt[:70]}...\"")

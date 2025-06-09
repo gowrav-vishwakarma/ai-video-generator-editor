@@ -20,6 +20,7 @@ class ProjectInfo(BaseModel):
     last_modified: float = Field(default_factory=time.time)
     status: str = STATUS_IN_PROGRESS
     config: Dict[str, Any]
+    speaker_audio_path: Optional[str] = None # Stores the relative path within the project dir
 
 class NarrationPart(BaseModel):
     text: str
@@ -94,6 +95,12 @@ class ProjectManager:
     def initialize_project(self, topic: str, config: ContentConfig):
         project_info = ProjectInfo(topic=topic, config=config.model_dump())
         self.state = ProjectState(project_info=project_info)
+        self._save_state()
+    
+    def set_speaker_audio(self, relative_path: str):
+        """Saves the relative path of the speaker audio to the project state."""
+        if not self.state: return
+        self.state.project_info.speaker_audio_path = relative_path
         self._save_state()
         
     def load_project(self) -> bool:
@@ -291,3 +298,67 @@ class ProjectManager:
         if scene:
             scene.character_names = character_names
             self._save_state()
+
+    def add_new_scene_at(self, scene_idx: int, narration_text: str = "New scene narration.", visual_prompt: str = "A vibrant new scene."):
+        """Inserts a new, empty scene at the specified index."""
+        if not self.state: return
+        print(f"Adding new scene at index {scene_idx}")
+
+        # 1. Insert new NarrationPart and VisualPrompt
+        new_narration = NarrationPart(text=narration_text)
+        new_visual = VisualPrompt(prompt=visual_prompt)
+        self.state.script.narration_parts.insert(scene_idx, new_narration)
+        self.state.script.visual_prompts.insert(scene_idx, new_visual)
+
+        # 2. Shift all subsequent Scene objects
+        # We process in reverse to avoid index conflicts during the loop
+        for i in range(len(self.state.scenes) - 1, -1, -1):
+            scene = self.state.scenes[i]
+            if scene.scene_idx >= scene_idx:
+                scene.scene_idx += 1
+        
+        # 3. Mark final video for reassembly
+        self._mark_final_for_reassembly()
+        self._save_state()
+
+    # NEW METHOD: Remove Scene
+    def remove_scene_at(self, scene_idx: int):
+        """Removes a scene and its assets at the specified index."""
+        if not self.state or scene_idx >= len(self.state.script.narration_parts): return
+        print(f"Removing scene at index {scene_idx}")
+
+        # 1. Remove the narration and visual prompt
+        del self.state.script.narration_parts[scene_idx]
+        del self.state.script.visual_prompts[scene_idx]
+
+        # 2. Find and remove the corresponding Scene object and its assets
+        scene_to_remove = self.get_scene_info(scene_idx)
+        if scene_to_remove:
+            # Delete physical assets associated with the scene
+            base_dir = self.output_dir
+            # Audio file
+            audio_path = os.path.join(base_dir, f"scene_{scene_idx}_audio.wav")
+            if os.path.exists(audio_path): os.remove(audio_path)
+            # Assembled scene video
+            assembled_path = os.path.join(base_dir, f"scene_{scene_idx}_assembled_video.mp4")
+            if os.path.exists(assembled_path): os.remove(assembled_path)
+            # Chunks (images and videos)
+            for chunk in scene_to_remove.chunks:
+                keyframe_path = os.path.join(base_dir, f"scene_{scene_idx}_chunk_{chunk.chunk_idx}_keyframe.png")
+                video_path_svd = os.path.join(base_dir, f"scene_{scene_idx}_chunk_{chunk.chunk_idx}_svd.mp4")
+                video_path_t2v = os.path.join(base_dir, f"scene_{scene_idx}_chunk_{chunk.chunk_idx}_t2v.mp4")
+                if os.path.exists(keyframe_path): os.remove(keyframe_path)
+                if os.path.exists(video_path_svd): os.remove(video_path_svd)
+                if os.path.exists(video_path_t2v): os.remove(video_path_t2v)
+            
+            # Remove from state
+            self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
+
+        # 3. Shift all subsequent Scene objects
+        for scene in self.state.scenes:
+            if scene.scene_idx > scene_idx:
+                scene.scene_idx -= 1
+        
+        # 4. Mark final video for reassembly
+        self._mark_final_for_reassembly()
+        self._save_state()

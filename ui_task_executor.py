@@ -151,3 +151,17 @@ class UITaskExecutor:
     def update_scene_characters(self, scene_idx: int, character_names: List[str]):
         self.project_manager.update_scene_characters(scene_idx, character_names)
         st.toast(f"Characters for Scene {scene_idx+1} updated.", icon="🎬")
+    
+    # NEW METHOD: Add Scene
+    def add_new_scene(self, scene_idx: int):
+        """UI wrapper to add a new scene."""
+        self.project_manager.add_new_scene_at(scene_idx)
+        st.toast(f"New scene added at position {scene_idx + 1}!", icon="➕")
+        return True
+
+    # NEW METHOD: Remove Scene
+    def remove_scene(self, scene_idx: int):
+        """UI wrapper to remove a scene."""
+        self.project_manager.remove_scene_at(scene_idx)
+        st.toast(f"Scene {scene_idx + 1} removed!", icon="🗑️")
+        return True

@@ -55,21 +55,20 @@ def load_project(project_name):
     else:
         st.error("Failed to load project.")
 
-# --- CHANGE: Function now accepts new parameters ---
 def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd):
     name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{name}_{int(time.time())}"
-    name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
-    output_dir = f"modular_reels_output/{name}_{int(time.time())}"
+    
     cfg = ContentConfig(
         output_dir=output_dir, 
-        aspect_ratio_format=video_format, # Pass "Portrait" or "Landscape"
+        aspect_ratio_format=video_format,
         target_video_length_hint=length, 
         min_scenes=min_s, 
         max_scenes=max_s, 
         use_svd_flow=use_svd
     )
-    pm = ProjectManager(output_dir); pm.initialize_project(topic, cfg)
+    pm = ProjectManager(output_dir)
+    pm.initialize_project(topic, cfg)
     st.session_state.current_project = pm
     st.session_state.ui_executor = UITaskExecutor(pm)
     st.session_state.auto_mode = auto
@@ -77,25 +76,32 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
         speaker_path = os.path.join(output_dir, "speaker_audio.wav")
         with open(speaker_path, "wb") as f: f.write(audio.getbuffer())
         st.session_state.speaker_audio = speaker_path
+        
     with st.spinner("Generating script..."):
+        # The first task is now part of the UI executor's responsibility
         success = st.session_state.ui_executor.task_executor.execute_task("generate_script", {"topic": topic})
+
     if success:
-        st.success("Script generated!"); st.session_state.current_project.load_project(); go_to_step('processing_dashboard')
+        st.success("Script generated!")
+        # Reload project to get the script data
+        st.session_state.current_project.load_project()
+        go_to_step('processing_dashboard')
     else:
-        st.error("Failed to generate script."); st.session_state.current_project = None
+        st.error("Failed to generate script.")
+        st.session_state.current_project = None
 
 # UI Rendering
 def render_project_selection():
     st.title("🎥 AI Video Generation Pipeline")
-    c1, c2 = st.columns([2, 1])
-    with c1:
+    c1, c2 = st.columns([1, 2])
+    with c2:
         st.subheader("Existing Projects")
         for p in list_projects():
             with st.container(border=True):
                 pc1, pc2, pc3 = st.columns([4, 2, 1])
                 pc1.write(f"**{p['topic']}**"); pc2.write(f"_{p['created_at'].strftime('%Y-%m-%d %H:%M')}_")
                 pc3.button("Load", key=f"load_{p['name']}", on_click=load_project, args=(p['name'],), use_container_width=True)
-    with c2:
+    with c1:
         with st.form("new_project_form"):
             st.subheader("Create New Project")
             topic = st.text_area("Video Topic")
@@ -113,14 +119,12 @@ def render_project_selection():
                 if not topic: st.error("Topic required.")
                 else: create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd)
 
-# ... (The rest of app.py can remain the same) ...
-# ... (render_processing_dashboard and render_video_assembly are unchanged) ...
 def render_processing_dashboard():
     project = st.session_state.current_project
     ui_executor = st.session_state.ui_executor
-    use_svd_flow = project.state.project_info["config"].get("use_svd_flow", True)
+    use_svd_flow = project.state.project_info.config.get("use_svd_flow", True)
 
-    st.title(f"🎬 Project: {project.state.project_info['topic']}")
+    st.title(f"🎬 Project: {project.state.project_info.topic}")
     c1, c2, c3 = st.columns([2, 3, 2])
     with c1:
         if st.button("⬅️ Back to Projects"): go_to_step('project_selection')
@@ -150,15 +154,15 @@ def render_processing_dashboard():
         if st.button("Assemble / View Final Video ➡️", type="primary"): go_to_step('video_assembly')
     st.write("---")
 
-    for i, part in enumerate(project.state.script["narration_parts"]):
+    for i, part in enumerate(project.state.script.narration_parts):
         with st.container(border=True):
             st.header(f"Scene {i+1}")
             st.subheader("Narration")
-            new_text = st.text_area("Script", part["text"], key=f"text_{i}", height=100, label_visibility="collapsed", disabled=st.session_state.is_processing)
-            if new_text != part["text"]: ui_executor.update_narration_text(i, new_text); st.rerun()
+            new_text = st.text_area("Script", part.text, key=f"text_{i}", height=100, label_visibility="collapsed", disabled=st.session_state.is_processing)
+            if new_text != part.text: ui_executor.update_narration_text(i, new_text); st.rerun()
 
-            if part.get("audio_path") and os.path.exists(part["audio_path"]):
-                st.audio(part["audio_path"])
+            if part.audio_path and os.path.exists(part.audio_path):
+                st.audio(part.audio_path)
                 if st.button("Regen Audio", key=f"regen_audio_{i}", disabled=st.session_state.is_processing):
                     with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio); st.rerun()
             else:
@@ -168,28 +172,27 @@ def render_processing_dashboard():
             st.divider(); st.subheader("Visual Chunks")
             scene = project.get_scene_info(i)
             if scene:
-                for chunk in scene["chunks"]:
-                    chunk_idx = chunk['chunk_idx']
+                for chunk in scene.chunks:
+                    chunk_idx = chunk.chunk_idx
                     with st.container(border=True):
-                        # --- UI IS CONDITIONAL ON FLOW ---
                         if use_svd_flow:
                             p_col, i_col, v_col = st.columns([2, 1, 1])
-                            with p_col: # Prompts
+                            with p_col:
                                 st.write(f"**Chunk {chunk_idx + 1}**")
-                                vis = st.text_area("Visual", chunk['visual_prompt'], key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
-                                if vis != chunk['visual_prompt']: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis); st.rerun()
-                                mot = st.text_area("Motion", chunk.get('motion_prompt', ''), key=f"m_prompt_{i}_{chunk_idx}", height=75, disabled=st.session_state.is_processing)
-                                if mot != chunk.get('motion_prompt', ''): ui_executor.update_chunk_prompts(i, chunk_idx, motion_prompt=mot); st.rerun()
-                            with i_col: # Image
-                                st.write("**Image**"); has_image = chunk.get("keyframe_image_path") and os.path.exists(chunk["keyframe_image_path"])
-                                if has_image: st.image(chunk["keyframe_image_path"])
+                                vis = st.text_area("Visual", chunk.visual_prompt, key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
+                                if vis != chunk.visual_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis); st.rerun()
+                                mot = st.text_area("Motion", chunk.motion_prompt, key=f"m_prompt_{i}_{chunk_idx}", height=75, disabled=st.session_state.is_processing)
+                                if mot != chunk.motion_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, motion_prompt=mot); st.rerun()
+                            with i_col:
+                                st.write("**Image**"); has_image = chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path)
+                                if has_image: st.image(chunk.keyframe_image_path)
                                 else: st.info("Image pending...")
                                 btn_txt = "Regen Image" if has_image else "Gen Image"
                                 if st.button(btn_txt, key=f"gen_img_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
                                     with st.spinner("..."): ui_executor.regenerate_chunk_image(i, chunk_idx); st.rerun()
-                            with v_col: # Video
-                                st.write("**Video**"); has_video = chunk.get("video_path") and os.path.exists(chunk["video_path"])
-                                if has_video: st.video(chunk["video_path"])
+                            with v_col:
+                                st.write("**Video**"); has_video = chunk.video_path and os.path.exists(chunk.video_path)
+                                if has_video: st.video(chunk.video_path)
                                 else: st.info("Video pending...")
                                 btn_txt = "Regen Video" if has_video else "Gen Video"
                                 if st.button(btn_txt, key=f"gen_vid_{i}_{chunk_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
@@ -198,16 +201,16 @@ def render_processing_dashboard():
                             p_col, v_col = st.columns([2, 1])
                             with p_col:
                                 st.write(f"**Chunk {chunk_idx + 1} Prompt**")
-                                vis = st.text_area("Prompt", chunk['visual_prompt'], key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
-                                if vis != chunk['visual_prompt']: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis); st.rerun()
+                                vis = st.text_area("Prompt", chunk.visual_prompt, key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
+                                if vis != chunk.visual_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis); st.rerun()
                             with v_col:
-                                st.write("**Video**"); has_video = chunk.get("video_path") and os.path.exists(chunk["video_path"])
-                                if has_video: st.video(chunk["video_path"])
+                                st.write("**Video**"); has_video = chunk.video_path and os.path.exists(chunk.video_path)
+                                if has_video: st.video(chunk.video_path)
                                 else: st.info("Video pending...")
                                 btn_txt = "Regen Video" if has_video else "Gen Video"
                                 if st.button(btn_txt, key=f"gen_t2v_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
                                     with st.spinner("..."): ui_executor.regenerate_chunk_t2v(i, chunk_idx); st.rerun()
-            elif part.get("status") == "generated":
+            elif part.status == "generated":
                  if st.button("Create Scene", key=f"create_scene_{i}", disabled=st.session_state.is_processing):
                     with st.spinner("..."): ui_executor.create_scene(i); st.rerun()
             else: st.info("Generate audio before scene creation.")
@@ -224,7 +227,7 @@ def render_processing_dashboard():
             if success:
                 fresh_pm = ProjectManager(st.session_state.current_project.output_dir); fresh_pm.load_project()
                 st.session_state.current_project = fresh_pm
-                st.session_state.ui_executor = UITaskExecutor(fresh_pm)
+                st.session_state.ui_executor = UITaskExecutor(fresh_pm) # Re-init with fresh state
                 st.rerun()
             else:
                 st.error(f"❌ Failed on: {next_task_name}. Stopping."); st.session_state.is_processing = False; st.rerun()
@@ -234,21 +237,26 @@ def render_video_assembly():
     project = st.session_state.current_project
     if st.button("⬅️ Back to Dashboard"): go_to_step('processing_dashboard')
     st.divider()
-    final_path = project.state.final_video.get("path")
+    final_path = project.state.final_video.path
     if final_path and os.path.exists(final_path):
         st.subheader("Final Video"); st.video(final_path)
         with st.expander("Details"):
-            st.write("**Narration:**", project.state.final_video.get("full_narration_text"))
-            st.write("**Hashtags:**", ", ".join(project.state.final_video.get("hashtags", [])))
+            st.write("**Narration:**", project.state.final_video.full_narration_text)
+            st.write("**Hashtags:**", ", ".join(project.state.final_video.hashtags))
+            
     if st.button("Re-Assemble Final Video", type="primary"):
         with st.spinner("..."):
-            if not all(s.get('status') == 'completed' for s in project.state.scenes):
+            # Ensure all scenes are assembled first
+            if not all(s.status == 'completed' for s in project.state.scenes):
                 for scene in project.state.scenes:
-                    if scene['status'] != 'completed':
-                        st.write(f"Assembling scene {scene['scene_idx']+1}...")
-                        st.session_state.ui_executor.task_executor.execute_task("assemble_scene", {"scene_idx": scene["scene_idx"]})
+                    if scene.status != 'completed':
+                        st.write(f"Assembling scene {scene.scene_idx+1}...")
+                        st.session_state.ui_executor.task_executor.execute_task("assemble_scene", {"scene_idx": scene.scene_idx})
+            
+            # Now assemble final video
             st.write("Assembling final video...")
             success = st.session_state.ui_executor.assemble_final_video()
+            
         if success: st.success("Assembled!"); st.rerun()
         else: st.error("Failed.")
 
@@ -261,16 +269,14 @@ else: go_to_step('project_selection')
 
 
 
-
-
 ==== project_manager.py ====
 # project_manager.py
 import os
-import json
 import time
 import logging
-from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
+from pydantic import BaseModel, Field
+
 from config_manager import ContentConfig
 
 logger = logging.getLogger(__name__)
@@ -278,12 +284,61 @@ logger = logging.getLogger(__name__)
 STATUS_PENDING, STATUS_GENERATED, STATUS_COMPLETED, STATUS_FAILED, STATUS_IN_PROGRESS = "pending", "generated", "completed", "failed", "in_progress"
 STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED = "image_generated", "video_generated"
 
-@dataclass
-class ProjectState:
-    project_info: Dict[str, Any]
-    script: Dict[str, Any]
-    scenes: List[Dict[str, Any]] = field(default_factory=list)
-    final_video: Dict[str, Any] = field(default_factory=dict)
+# --- Pydantic Models for Project State ---
+
+class ProjectInfo(BaseModel):
+    topic: str
+    created_at: float = Field(default_factory=time.time)
+    last_modified: float = Field(default_factory=time.time)
+    status: str = STATUS_IN_PROGRESS
+    config: Dict[str, Any]
+
+class NarrationPart(BaseModel):
+    text: str
+    status: str = STATUS_PENDING
+    audio_path: str = ""
+    duration: float = 0.0
+
+class VisualPrompt(BaseModel):
+    prompt: str
+
+class Script(BaseModel):
+    # NEW: Fields for consistent context
+    main_subject_description: str = ""
+    setting_description: str = ""
+    
+    narration_parts: List[NarrationPart] = Field(default_factory=list)
+    visual_prompts: List[VisualPrompt] = Field(default_factory=list)
+    hashtags: List[str] = Field(default_factory=list)
+
+class Chunk(BaseModel):
+    chunk_idx: int
+    target_duration: float
+    visual_prompt: str
+    motion_prompt: Optional[str] = ""
+    status: str = STATUS_PENDING
+    keyframe_image_path: str = ""
+    video_path: str = ""
+
+class Scene(BaseModel):
+    scene_idx: int
+    status: str = STATUS_PENDING
+    assembled_video_path: str = ""
+    chunks: List[Chunk] = Field(default_factory=list)
+
+class FinalVideo(BaseModel):
+    status: str = STATUS_PENDING
+    path: str = ""
+    full_narration_text: str = ""
+    hashtags: List[str] = Field(default_factory=list)
+
+class ProjectState(BaseModel):
+    project_info: ProjectInfo
+    script: Script = Field(default_factory=Script)
+    scenes: List[Scene] = Field(default_factory=list)
+    final_video: FinalVideo = Field(default_factory=FinalVideo)
+
+# --- ProjectManager Class ---
 
 class ProjectManager:
     def __init__(self, output_dir: str):
@@ -294,211 +349,207 @@ class ProjectManager:
         
     def _save_state(self):
         if not self.state: return
-        self.state.project_info["last_modified"] = time.time()
-        with open(self.project_file, 'w') as f: json.dump(asdict(self.state), f, indent=4)
+        self.state.project_info.last_modified = time.time()
+        with open(self.project_file, 'w') as f:
+            f.write(self.state.model_dump_json(indent=4))
             
     def initialize_project(self, topic: str, config: ContentConfig):
-        self.state = ProjectState(
-            project_info={"topic": topic, "created_at": time.time(), "last_modified": time.time(), "status": STATUS_IN_PROGRESS, "config": config.__dict__},
-            script={"narration_parts": [], "visual_prompts": [], "hashtags": []},
-            scenes=[], final_video={"status": STATUS_PENDING})
+        project_info = ProjectInfo(topic=topic, config=config.model_dump())
+        self.state = ProjectState(project_info=project_info)
         self._save_state()
         
     def load_project(self) -> bool:
         if not os.path.exists(self.project_file): return False
         try:
-            with open(self.project_file, 'r') as f: data = json.load(f)
-            data.setdefault('scenes', []); data.setdefault('final_video', {'status': STATUS_PENDING})
-            if 'script' in data and 'visual_prompts' not in data['script']:
-                data['script']['visual_prompts'] = []
-            self.state = ProjectState(**data)
+            with open(self.project_file, 'r') as f:
+                self.state = ProjectState.model_validate_json(f.read())
             return True
         except Exception as e:
-            logger.error(f"Error loading project: {e}"); return False
+            logger.error(f"Error loading project with Pydantic: {e}", exc_info=True); return False
 
-    def update_script(self, narration_parts: List[Dict], visual_prompts: List[Dict], hashtags: List[str]):
+    def update_script(self, script_data: Dict[str, Any]):
         if not self.state: return
-        self.state.script["narration_parts"] = narration_parts
-        self.state.script["visual_prompts"] = visual_prompts
-        self.state.script["hashtags"] = hashtags
+        self.state.script.main_subject_description = script_data.get("main_subject_description", "")
+        self.state.script.setting_description = script_data.get("setting_description", "")
+        self.state.script.narration_parts = [NarrationPart(**p) for p in script_data.get("narration", [])]
+        self.state.script.visual_prompts = [VisualPrompt(prompt=p) for p in script_data.get("visuals", [])]
+        self.state.script.hashtags = script_data.get("hashtags", [])
         self._save_state()
 
+    # ... get_next_pending_task and other methods remain the same ...
     def get_next_pending_task(self) -> Tuple[Optional[str], Optional[Dict]]:
         if not self.state: return None, None
         
-        try:
-            # Create a ContentConfig instance from the stored dictionary to access properties
-            cfg = ContentConfig(**self.state.project_info["config"])
-            use_svd_flow = cfg.use_svd_flow
-        except Exception as e:
-            logger.warning(f"Could not read config from project state: {e}. Defaulting use_svd_flow to True.")
-            use_svd_flow = True
+        cfg = ContentConfig(**self.state.project_info.config)
+        use_svd_flow = cfg.use_svd_flow
 
-        if not self.state.script["narration_parts"]: return "generate_script", {"topic": self.state.project_info["topic"]}
-        for i, part in enumerate(self.state.script["narration_parts"]):
-            if part.get("status") != STATUS_GENERATED: return "generate_audio", {"scene_idx": i, "text": part["text"]}
-        narration_indices_with_scenes = {s['scene_idx'] for s in self.state.scenes}
-        for i, part in enumerate(self.state.script["narration_parts"]):
+        if not self.state.script.narration_parts: return "generate_script", {"topic": self.state.project_info.topic}
+        
+        for i, part in enumerate(self.state.script.narration_parts):
+            if part.status != STATUS_GENERATED: return "generate_audio", {"scene_idx": i, "text": part.text}
+        
+        narration_indices_with_scenes = {s.scene_idx for s in self.state.scenes}
+        for i in range(len(self.state.script.narration_parts)):
             if i not in narration_indices_with_scenes: return "create_scene", {"scene_idx": i}
 
-        for scene in self.state.scenes:
-            for chunk in scene["chunks"]:
-                if chunk.get("status") != STATUS_VIDEO_GENERATED:
-                    task_data = { "scene_idx": scene["scene_idx"], "chunk_idx": chunk["chunk_idx"], "visual_prompt": chunk["visual_prompt"], "motion_prompt": chunk.get("motion_prompt")}
+        for scene in sorted(self.state.scenes, key=lambda s: s.scene_idx):
+            for chunk in sorted(scene.chunks, key=lambda c: c.chunk_idx):
+                if chunk.status != STATUS_VIDEO_GENERATED:
+                    task_data = { "scene_idx": scene.scene_idx, "chunk_idx": chunk.chunk_idx, "visual_prompt": chunk.visual_prompt, "motion_prompt": chunk.motion_prompt}
                     if use_svd_flow:
-                        if chunk.get("status") == STATUS_PENDING: return "generate_chunk_image", task_data
-                        if chunk.get("status") == STATUS_IMAGE_GENERATED: return "generate_chunk_video", task_data
-                    else:
+                        if chunk.status == STATUS_PENDING: return "generate_chunk_image", task_data
+                        if chunk.status == STATUS_IMAGE_GENERATED: return "generate_chunk_video", task_data
+                    else: # T2V Flow
                         return "generate_chunk_t2v", task_data
 
         for scene in self.state.scenes:
-            if all(c.get("status") == STATUS_VIDEO_GENERATED for c in scene["chunks"]) and scene.get("status") != STATUS_COMPLETED:
-                return "assemble_scene", {"scene_idx": scene["scene_idx"]}
-        if self.state.scenes and all(s.get("status") == STATUS_COMPLETED for s in self.state.scenes) and self.state.final_video.get("status") != STATUS_GENERATED:
+            if all(c.status == STATUS_VIDEO_GENERATED for c in scene.chunks) and scene.status != STATUS_COMPLETED:
+                return "assemble_scene", {"scene_idx": scene.scene_idx}
+        
+        if self.state.scenes and all(s.status == STATUS_COMPLETED for s in self.state.scenes) and self.state.final_video.status != STATUS_GENERATED:
             return "assemble_final", {}
+            
         return None, None
 
-    # ... (the rest of the file can remain the same, as the update methods are generic) ...
     def update_narration_part_text(self, part_idx: int, text: str):
-        if not self.state or part_idx >= len(self.state.script["narration_parts"]): return
-        part = self.state.script["narration_parts"][part_idx]
-        if part["text"] != text:
-            part["text"] = text; part["status"] = STATUS_PENDING; part["audio_path"] = ""; part["duration"] = 0
-            self.state.scenes = [s for s in self.state.scenes if s.get('scene_idx') != part_idx]
+        if not self.state or part_idx >= len(self.state.script.narration_parts): return
+        part = self.state.script.narration_parts[part_idx]
+        if part.text != text:
+            part.text = text; part.status = STATUS_PENDING; part.audio_path = ""; part.duration = 0
+            self.state.scenes = [s for s in self.state.scenes if s.scene_idx != part_idx]
             self._mark_final_for_reassembly()
             self._save_state()
 
     def add_scene(self, scene_idx: int, chunks: List[Dict]):
         if not self.state: return
-        scene_data = { "scene_idx": scene_idx, "narration": self.state.script["narration_parts"][scene_idx], "chunks": chunks, "assembled_video_path": "", "status": STATUS_PENDING }
-        self.state.scenes = [s for s in self.state.scenes if s.get('scene_idx') != scene_idx]
+        scene_data = Scene(scene_idx=scene_idx, chunks=[Chunk(**c) for c in chunks])
+        self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
         self.state.scenes.append(scene_data)
-        self.state.scenes.sort(key=lambda s: s['scene_idx'])
+        self.state.scenes.sort(key=lambda s: s.scene_idx)
         self._save_state()
 
     def update_chunk_content(self, scene_idx: int, chunk_idx: int, visual_prompt: Optional[str] = None, motion_prompt: Optional[str] = None):
         scene = self.get_scene_info(scene_idx)
-        if not scene or chunk_idx >= len(scene["chunks"]): return
-        chunk = scene["chunks"][chunk_idx]
+        if not scene or chunk_idx >= len(scene.chunks): return
+        chunk = scene.chunks[chunk_idx]
         changed = False
-        if visual_prompt is not None and chunk["visual_prompt"] != visual_prompt:
-            chunk["visual_prompt"] = visual_prompt; changed = True
-        if motion_prompt is not None and chunk.get("motion_prompt", "") != motion_prompt:
-            chunk["motion_prompt"] = motion_prompt; changed = True
+        if visual_prompt is not None and chunk.visual_prompt != visual_prompt:
+            chunk.visual_prompt = visual_prompt; changed = True
+        if motion_prompt is not None and chunk.motion_prompt != motion_prompt:
+            chunk.motion_prompt = motion_prompt; changed = True
         if changed:
-            chunk["status"] = STATUS_PENDING; chunk["keyframe_image_path"] = ""; chunk["video_path"] = ""
+            chunk.status = STATUS_PENDING; chunk.keyframe_image_path = ""; chunk.video_path = ""
             self._mark_scene_for_reassembly(scene_idx)
             self._save_state()
             
     def _mark_scene_for_reassembly(self, scene_idx: int):
         scene = self.get_scene_info(scene_idx)
-        if scene and scene["status"] == STATUS_COMPLETED:
-            scene["status"] = STATUS_PENDING; scene["assembled_video_path"] = ""
+        if scene and scene.status == STATUS_COMPLETED:
+            scene.status = STATUS_PENDING; scene.assembled_video_path = ""
             self._mark_final_for_reassembly()
 
     def _mark_final_for_reassembly(self):
-        if self.state and self.state.final_video.get("status") == STATUS_GENERATED:
-            self.state.final_video["status"] = STATUS_PENDING; self.state.final_video["path"] = ""
-            self.state.project_info["status"] = STATUS_IN_PROGRESS
+        if self.state and self.state.final_video.status == STATUS_GENERATED:
+            self.state.final_video.status = STATUS_PENDING; self.state.final_video.path = ""
+            self.state.project_info.status = STATUS_IN_PROGRESS
     
-    def get_scene_info(self, scene_idx: int) -> Optional[Dict]:
+    def get_scene_info(self, scene_idx: int) -> Optional[Scene]:
         if not self.state: return None
-        return next((s for s in self.state.scenes if s["scene_idx"] == scene_idx), None)
+        return next((s for s in self.state.scenes if s.scene_idx == scene_idx), None)
 
     def update_narration_part_status(self, part_idx: int, status: str, audio_path: str = "", duration: float = 0.0):
-        if not self.state or part_idx >= len(self.state.script["narration_parts"]): return
-        part = self.state.script["narration_parts"][part_idx]
-        part['status'] = status; part['audio_path'] = audio_path; part['duration'] = duration
+        if not self.state or part_idx >= len(self.state.script.narration_parts): return
+        part = self.state.script.narration_parts[part_idx]
+        part.status = status; part.audio_path = audio_path; part.duration = duration
         self._save_state()
 
     def update_chunk_status(self, scene_idx, chunk_idx, status, keyframe_path=None, video_path=None):
         scene = self.get_scene_info(scene_idx)
-        if not scene or chunk_idx >= len(scene['chunks']): return
-        chunk = scene['chunks'][chunk_idx]
-        chunk['status'] = status
-        if keyframe_path: chunk['keyframe_image_path'] = keyframe_path
-        if video_path: chunk['video_path'] = video_path
+        if not scene or chunk_idx >= len(scene.chunks): return
+        chunk = scene.chunks[chunk_idx]
+        chunk.status = status
+        if keyframe_path: chunk.keyframe_image_path = keyframe_path
+        if video_path: chunk.video_path = video_path
         self._save_state()
 
     def update_scene_status(self, scene_idx, status, assembled_video_path=None):
         scene = self.get_scene_info(scene_idx)
         if not scene: return
-        scene['status'] = status
-        if assembled_video_path: scene['assembled_video_path'] = assembled_video_path
+        scene.status = status
+        if assembled_video_path: scene.assembled_video_path = assembled_video_path
         self._save_state()
         
     def update_final_video(self, path, status, full_narration_text, hashtags):
         if not self.state: return
-        self.state.final_video.update({"path": path, "status": status, "full_narration_text": full_narration_text, "hashtags": hashtags})
-        if status == "generated": self.state.project_info["status"] = "completed"
+        self.state.final_video.path = path
+        self.state.final_video.status = status
+        self.state.final_video.full_narration_text = full_narration_text
+        self.state.final_video.hashtags = hashtags
+        if status == "generated": self.state.project_info.status = "completed"
         self._save_state()
 
 
 
 ==== task_executor.py ====
 # task_executor.py
-
 import logging
 import math
 import os
 from typing import Optional, Dict
 import torch
+from importlib import import_module
+
 from project_manager import ProjectManager, STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED, STATUS_FAILED
 from config_manager import ContentConfig, ModuleSelectorConfig
 from video_assembly import assemble_final_reel, assemble_scene_video_from_sub_clips
+from base_modules import BaseModuleConfig
 
 logger = logging.getLogger(__name__)
 
+def _import_class(module_path_str: str):
+    module_path, class_name = module_path_str.rsplit('.', 1)
+    module = import_module(module_path)
+    return getattr(module, class_name)
+
 class TaskExecutor:
-    def __init__(self, project_manager: ProjectManager, content_cfg: ContentConfig, module_selector_cfg: ModuleSelectorConfig):
+    def __init__(self, project_manager: ProjectManager):
         self.project_manager = project_manager
-        self.content_cfg = content_cfg
-        self.module_selector_cfg = module_selector_cfg
+        self.content_cfg = ContentConfig(**self.project_manager.state.project_info.config)
+        module_selector_cfg = ModuleSelectorConfig()
+
+        LlmClass = _import_class(module_selector_cfg.llm_module)
+        self.llm_module = LlmClass(LlmClass.Config())
         
-        self.llm_module = self._load_module(module_selector_cfg.llm_module)
-        self.tts_module = self._load_module(module_selector_cfg.tts_module)
-        self.t2i_module = self._load_module(module_selector_cfg.t2i_module)
-        self.i2v_module = self._load_module(module_selector_cfg.i2v_module)
-        self.t2v_module = self._load_module(module_selector_cfg.t2v_module)
+        TtsClass = _import_class(module_selector_cfg.tts_module)
+        self.tts_module = TtsClass(TtsClass.Config())
+
+        T2iClass = _import_class(module_selector_cfg.t2i_module)
+        self.t2i_module = T2iClass(T2iClass.Config())
+
+        I2vClass = _import_class(module_selector_cfg.i2v_module)
+        self.i2v_module = I2vClass(I2vClass.Config())
+
+        T2vClass = _import_class(module_selector_cfg.t2v_module)
+        self.t2v_module = T2vClass(T2vClass.Config())
         
-        self.llm_cfg = self.llm_module.LLMConfig()
-        self.tts_cfg = self.tts_module.TTSConfig()
-        self.t2i_cfg = self.t2i_module.T2IConfig()
-        self.i2v_cfg = self.i2v_module.I2VConfig()
-        self.t2v_cfg = self.t2v_module.T2VConfig()
-        
-        # #############################################################################
-        # # --- NEW DYNAMIC CONFIGURATION LOGIC ---
-        # #############################################################################
+        self._configure_from_model_capabilities()
+
+    def _configure_from_model_capabilities(self):
+        # ... this method is unchanged ...
         print("--- TaskExecutor: Configuring run from model capabilities... ---")
-        
-        # Determine which model's capabilities to use for video generation
         if self.content_cfg.use_svd_flow:
-            # For T2I->I2V, resolution is from T2I, duration from I2V (or T2I as fallback)
             t2i_caps = self.t2i_module.get_model_capabilities()
-            # In a full system, you might get this from i2v_module, but for now this is fine
-            i2v_caps = self.i2v_module.get_model_capabilities() if hasattr(self.i2v_module, 'get_model_capabilities') else t2i_caps
-            
+            i2v_caps = self.i2v_module.get_model_capabilities()
             self.content_cfg.generation_resolution = t2i_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
             self.content_cfg.model_max_video_chunk_duration = i2v_caps.get("max_chunk_duration", 3.0)
-        else:
-            # For direct T2V, both resolution and duration come from the T2V model
+        else: # T2V Flow
             t2v_caps = self.t2v_module.get_model_capabilities()
             self.content_cfg.generation_resolution = t2v_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
             self.content_cfg.model_max_video_chunk_duration = t2v_caps.get("max_chunk_duration", 2.0)
-            
         print(f"Dynamically set Generation Resolution to: {self.content_cfg.generation_resolution}")
         print(f"Dynamically set Max Chunk Duration to: {self.content_cfg.model_max_video_chunk_duration}s")
-        print("-----------------------------------------------------------------")
-
-        # Save the now-complete config back to the project file for consistency
-        self.project_manager.state.project_info["config"] = self.content_cfg.__dict__
+        self.project_manager.state.project_info.config = self.content_cfg.model_dump()
         self.project_manager._save_state()
-        # #############################################################################
-
-    def _load_module(self, module_path_str: str):
-        parts = module_path_str.split('.'); module_name = ".".join(parts)
-        return __import__(module_name, fromlist=[parts[-1]])
 
     def execute_task(self, task: str, task_data: Dict) -> bool:
         try:
@@ -508,63 +559,67 @@ class TaskExecutor:
                 "generate_chunk_video": self._execute_generate_chunk_video, "generate_chunk_t2v": self._execute_generate_chunk_t2v,
                 "assemble_scene": self._execute_assemble_scene, "assemble_final": self._execute_assemble_final,
             }
-            if task in task_map:
-                return task_map[task](**task_data)
+            if task in task_map: return task_map[task](**task_data)
             logger.error(f"Unknown task: {task}"); return False
         except Exception as e:
             logger.error(f"Error executing task {task}: {e}", exc_info=True); return False
 
     def _execute_generate_script(self, topic: str) -> bool:
-        narration_parts, visual_prompts, hashtags = self.llm_module.generate_script(topic, self.content_cfg, self.llm_cfg)
-        self.llm_module.clear_llm_vram()
-        narration_parts_with_status = [{"text": p["text"], "status": "pending"} for p in narration_parts]
-        visual_prompts_with_status = [{"prompt": p, "status": "pending"} for p in visual_prompts]
-        self.project_manager.update_script(narration_parts_with_status, visual_prompts_with_status, hashtags)
+        script_data = self.llm_module.generate_script(topic, self.content_cfg)
+        self.llm_module.clear_vram()
+        self.project_manager.update_script(script_data)
         return True
 
     def _execute_generate_audio(self, scene_idx: int, text: str, speaker_wav: Optional[str] = None) -> bool:
-        path, duration = self.tts_module.generate_audio(text, self.content_cfg.output_dir, scene_idx, self.tts_cfg, speaker_wav=speaker_wav)
-        if duration <= 0.1: duration = 0.0
-        self.project_manager.update_narration_part_status(scene_idx, "generated", path, duration)
+        path, duration = self.tts_module.generate_audio(text, self.content_cfg.output_dir, scene_idx, speaker_wav)
+        self.project_manager.update_narration_part_status(scene_idx, "generated", path, duration if duration > 0.1 else 0.0)
         return True
 
     def _execute_create_scene(self, scene_idx: int) -> bool:
-        narration = self.project_manager.state.script["narration_parts"][scene_idx]
-        visual_prompt_data = self.project_manager.state.script["visual_prompts"][scene_idx]
-        num_chunks = math.ceil(narration["duration"] / self.content_cfg.model_max_video_chunk_duration)
-        if num_chunks == 0: num_chunks = 1
-        chunk_prompts = self.llm_module.generate_chunk_visual_prompts(narration["text"], visual_prompt_data["prompt"], num_chunks, self.content_cfg, self.llm_cfg)
-        self.llm_module.clear_llm_vram()
+        narration = self.project_manager.state.script.narration_parts[scene_idx]
+        visual_prompt = self.project_manager.state.script.visual_prompts[scene_idx]
+        main_subject = self.project_manager.state.script.main_subject_description
+        setting = self.project_manager.state.script.setting_description
+        
+        num_chunks = math.ceil(narration.duration / self.content_cfg.model_max_video_chunk_duration) or 1
+        
+        chunk_prompts = self.llm_module.generate_chunk_visual_prompts(
+            narration.text, visual_prompt.prompt, num_chunks, self.content_cfg, main_subject, setting
+        )
+        self.llm_module.clear_vram()
         
         chunks = []
-        for i in range(num_chunks):
-            duration = self.content_cfg.model_max_video_chunk_duration if i < num_chunks - 1 else narration["duration"] - (i * self.content_cfg.model_max_video_chunk_duration)
-            visual, motion = chunk_prompts[i]
-            chunks.append({"chunk_idx": i, "target_duration": max(0.5, duration), "visual_prompt": visual, "motion_prompt": motion, "status": "pending"})
+        for i, (visual, motion) in enumerate(chunk_prompts):
+            duration = self.content_cfg.model_max_video_chunk_duration if i < num_chunks - 1 else narration.duration - (i * self.content_cfg.model_max_video_chunk_duration)
+            chunks.append({"chunk_idx": i, "target_duration": max(0.5, duration), "visual_prompt": visual, "motion_prompt": motion})
         self.project_manager.add_scene(scene_idx, chunks)
         return True
 
     def _execute_generate_chunk_image(self, scene_idx: int, chunk_idx: int, visual_prompt: str, **kwargs) -> bool:
         w, h = self.content_cfg.generation_resolution
         path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_keyframe.png")
-        self.t2i_module.generate_image(visual_prompt, path, w, h, self.t2i_cfg)
+        
+        # NEW: Enhance prompt before generation
+        enhanced_prompt = self.t2i_module.enhance_prompt(visual_prompt)
+        
+        self.t2i_module.generate_image(enhanced_prompt, path, w, h)
         self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_IMAGE_GENERATED, keyframe_path=path)
-        self.t2i_module.clear_t2i_vram()
+        self.t2i_module.clear_vram()
         return True
 
     def _execute_generate_chunk_video(self, scene_idx: int, chunk_idx: int, visual_prompt: str, motion_prompt: Optional[str], **kwargs) -> bool:
-        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        keyframe_path = chunk.get("keyframe_image_path")
-        if not keyframe_path or not os.path.exists(keyframe_path): return False
+        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
+        if not chunk.keyframe_image_path or not os.path.exists(chunk.keyframe_image_path): return False
+        
+        # NEW: Enhance prompts before generation
+        enhanced_visual = self.i2v_module.enhance_prompt(visual_prompt, "visual")
+        enhanced_motion = self.i2v_module.enhance_prompt(motion_prompt, "motion")
+
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4")
         sub_clip_path = self.i2v_module.generate_video_from_image(
-            image_path=keyframe_path, 
-            output_video_path=video_path, 
-            target_duration=chunk["target_duration"], 
-            content_config=self.content_cfg, # <-- Pass the whole config
-            i2v_config=self.i2v_cfg, 
-            motion_prompt=motion_prompt, 
-            visual_prompt=visual_prompt
+            image_path=chunk.keyframe_image_path, output_video_path=video_path, 
+            target_duration=chunk.target_duration, content_config=self.content_cfg,
+            visual_prompt=enhanced_visual, motion_prompt=enhanced_motion
         )
         if sub_clip_path and os.path.exists(sub_clip_path):
             self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
@@ -572,11 +627,15 @@ class TaskExecutor:
         self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_FAILED); return False
 
     def _execute_generate_chunk_t2v(self, scene_idx: int, chunk_idx: int, visual_prompt: str, **kwargs) -> bool:
-        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        num_frames = int(chunk["target_duration"] * self.content_cfg.fps)
+        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
+        num_frames = int(chunk.target_duration * self.content_cfg.fps)
         w, h = self.content_cfg.generation_resolution
+        
+        # NEW: Enhance prompt before generation
+        enhanced_prompt = self.t2v_module.enhance_prompt(visual_prompt)
+        
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_t2v.mp4")
-        sub_clip_path = self.t2v_module.generate_video_from_text(visual_prompt, video_path, num_frames, self.content_cfg.fps, w, h, self.t2v_cfg)
+        sub_clip_path = self.t2v_module.generate_video_from_text(enhanced_prompt, video_path, num_frames, self.content_cfg.fps, w, h)
         if sub_clip_path and os.path.exists(sub_clip_path):
             self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
             return True
@@ -585,22 +644,32 @@ class TaskExecutor:
     def _execute_assemble_scene(self, scene_idx: int, **kwargs) -> bool:
         scene = self.project_manager.get_scene_info(scene_idx)
         if not scene: return False
-        video_paths = [c["video_path"] for c in scene["chunks"] if c["status"] == STATUS_VIDEO_GENERATED]
-        if len(video_paths) != len(scene['chunks']): return False
-        final_path = assemble_scene_video_from_sub_clips(video_paths, scene["narration"]["duration"], self.content_cfg, scene_idx)
+        video_paths = [c.video_path for c in scene.chunks if c.status == STATUS_VIDEO_GENERATED]
+        if len(video_paths) != len(scene.chunks): return False
+        
+        narration_duration = self.project_manager.state.script.narration_parts[scene_idx].duration
+        final_path = assemble_scene_video_from_sub_clips(video_paths, narration_duration, self.content_cfg, scene_idx)
+        
         if final_path:
             self.project_manager.update_scene_status(scene_idx, "completed", assembled_video_path=final_path)
             return True
         self.project_manager.update_scene_status(scene_idx, "failed"); return False
     
     def _execute_assemble_final(self, **kwargs) -> bool:
-        assets = [(s["assembled_video_path"], s["narration"]["audio_path"], {"text": s["narration"]["text"], "duration": s["narration"]["duration"]}) for s in self.project_manager.state.scenes if s["status"] == "completed"]
+        narration_parts = self.project_manager.state.script.narration_parts
+        assets = [
+            (s.assembled_video_path, narration_parts[s.scene_idx].audio_path, {"text": narration_parts[s.scene_idx].text, "duration": narration_parts[s.scene_idx].duration})
+            for s in self.project_manager.state.scenes if s.status == "completed"
+        ]
         if len(assets) != len(self.project_manager.state.scenes): return False
-        topic = self.project_manager.state.project_info["topic"]
+        
+        topic = self.project_manager.state.project_info.topic
         final_path = assemble_final_reel(assets, self.content_cfg, output_filename=f"{topic.replace(' ','_')}_final.mp4")
+        
         if final_path and os.path.exists(final_path):
             text = " ".join([a[2]["text"] for a in assets])
-            self.project_manager.update_final_video(final_path, "generated", text, self.project_manager.state.script["hashtags"])
+            hashtags = self.project_manager.state.script.hashtags
+            self.project_manager.update_final_video(final_path, "generated", text, hashtags)
             return True
         self.project_manager.update_final_video("", "pending", "", []); return False
 
@@ -609,7 +678,7 @@ class TaskExecutor:
 ==== ui_task_executor.py ====
 import streamlit as st
 from task_executor import TaskExecutor
-from config_manager import ContentConfig, ModuleSelectorConfig
+from config_manager import ContentConfig
 import logging
 from typing import Optional
 import os
@@ -629,12 +698,10 @@ class UITaskExecutor:
             st.error("Cannot initialize task executor: Project state not found.")
             return
         try:
-            config_dict = self.project_manager.state.project_info["config"]
-            content_cfg = ContentConfig(**config_dict)
-            module_selector_cfg = ModuleSelectorConfig()
-            self.task_executor = TaskExecutor(self.project_manager, content_cfg, module_selector_cfg)
+            # TaskExecutor now only needs the project_manager to initialize itself
+            self.task_executor = TaskExecutor(self.project_manager)
         except Exception as e:
-            logger.error(f"Failed to initialize TaskExecutor: {e}")
+            logger.error(f"Failed to initialize TaskExecutor: {e}", exc_info=True)
             st.error(f"Configuration Error: {e}")
 
     def update_narration_text(self, scene_idx: int, text: str):
@@ -663,10 +730,12 @@ class UITaskExecutor:
 
     def regenerate_chunk_image(self, scene_idx: int, chunk_idx: int) -> bool:
         if not self.task_executor: return False
-        self.project_manager.update_chunk_content(scene_idx, chunk_idx)
-        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        image_task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk["visual_prompt"]}
-        success = self.task_executor.execute_task("generate_chunk_image", image_task_data)
+        # No need to call update_chunk_content if prompts are not changing
+        # It resets status, which is what we want for a regen.
+        self.project_manager.update_chunk_content(scene_idx, chunk_idx) 
+        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
+        task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk.visual_prompt}
+        success = self.task_executor.execute_task("generate_chunk_image", task_data)
         if success: st.toast(f"Image for Chunk {chunk_idx + 1} generated!", icon="🖼️")
         else: st.error(f"Failed to generate image for Chunk {chunk_idx + 1}.")
         self.project_manager.load_project()
@@ -674,21 +743,15 @@ class UITaskExecutor:
 
     def regenerate_chunk_video(self, scene_idx: int, chunk_idx: int) -> bool:
         if not self.task_executor: return False
+        # Also reset status for regen
         self.project_manager.update_chunk_content(scene_idx, chunk_idx)
-        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        
-        # #############################################################################
-        # # --- THE FIX IS HERE ---
-        # # We must add the `visual_prompt` to the data dictionary.
-        # #############################################################################
-        video_task_data = {
-            "scene_idx": scene_idx,
-            "chunk_idx": chunk_idx,
-            "visual_prompt": chunk["visual_prompt"], # <-- This line was missing
-            "motion_prompt": chunk.get("motion_prompt")
+        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
+        task_data = {
+            "scene_idx": scene_idx, "chunk_idx": chunk_idx,
+            "visual_prompt": chunk.visual_prompt,
+            "motion_prompt": chunk.motion_prompt
         }
-        
-        success = self.task_executor.execute_task("generate_chunk_video", video_task_data)
+        success = self.task_executor.execute_task("generate_chunk_video", task_data)
         if success: st.toast(f"Video for Chunk {chunk_idx + 1} generated!", icon="📹")
         else: st.error(f"Failed to generate video for Chunk {chunk_idx + 1}.")
         self.project_manager.load_project()
@@ -697,8 +760,8 @@ class UITaskExecutor:
     def regenerate_chunk_t2v(self, scene_idx: int, chunk_idx: int) -> bool:
         if not self.task_executor: return False
         self.project_manager.update_chunk_content(scene_idx, chunk_idx)
-        chunk = self.project_manager.get_scene_info(scene_idx)['chunks'][chunk_idx]
-        task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk["visual_prompt"]}
+        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
+        task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk.visual_prompt}
         success = self.task_executor.execute_task("generate_chunk_t2v", task_data)
         if success: st.toast(f"T2V Chunk {chunk_idx + 1} generated!", icon="📹")
         else: st.error(f"Failed to generate T2V Chunk {chunk_idx + 1}.")
@@ -710,6 +773,7 @@ class UITaskExecutor:
         success = self.task_executor.execute_task("assemble_final", {})
         if success: st.toast("Final video assembled successfully!", icon="🏆")
         else: st.error("Failed to assemble final video.")
+        self.project_manager.load_project()
         return success
 
 
@@ -719,20 +783,19 @@ class UITaskExecutor:
 import os
 import torch
 import gc
-from dataclasses import dataclass, field
-from typing import Tuple
+from pydantic import BaseModel, Field
+from typing import Tuple, Literal
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 if DEVICE == "cuda": os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-@dataclass
-class ContentConfig:
-    """Configuration for overall content generation parameters."""
+class ContentConfig(BaseModel):
+    """Configuration for overall content generation parameters, using Pydantic."""
     # --- User-defined settings from the UI ---
     target_video_length_hint: float = 20.0
     min_scenes: int = 2
     max_scenes: int = 5
-    aspect_ratio_format: str = "Portrait" # Simplified to "Portrait" or "Landscape"
+    aspect_ratio_format: Literal["Portrait", "Landscape"] = "Portrait"
     use_svd_flow: bool = True
 
     # --- Static project-wide settings ---
@@ -744,14 +807,9 @@ class ContentConfig:
     model_max_video_chunk_duration: float = 2.0 # A safe default
     generation_resolution: Tuple[int, int] = (1024, 1024) # A safe default
 
-    # #############################################################################
-    # # --- THE FIX IS HERE ---
-    # # We are re-adding `max_scene_narration_duration_hint` as a calculated property.
-    # #############################################################################
     @property
     def max_scene_narration_duration_hint(self) -> float:
         """Calculates an ideal narration length per scene based on total length and scene count."""
-        # Aim for a duration that fits within the target length by averaging the min/max scenes
         if self.max_scenes > 0 and self.min_scenes > 0:
             avg_scenes = (self.min_scenes + self.max_scenes) / 2
             return round(self.target_video_length_hint / avg_scenes, 1)
@@ -764,33 +822,38 @@ class ContentConfig:
             return (1920, 1080)
         return (1080, 1920) # Default to Portrait
 
-    def __post_init__(self):
+    def __init__(self, **data):
+        super().__init__(**data)
         os.makedirs(self.output_dir, exist_ok=True)
         print(f"--- Project Config Initialized ---")
         print(f"Flow: {'T2I -> I2V (SVD)' if self.use_svd_flow else 'Direct T2V'}")
         print(f"Format: {self.aspect_ratio_format}")
-        # These will be updated later by the TaskExecutor
         print(f"Initial Generation Resolution: {self.generation_resolution}")
         print(f"Initial Max Chunk Duration: {self.model_max_video_chunk_duration}s")
         print(f"---------------------------------")
 
 
+class ModuleSelectorConfig(BaseModel):
+    llm_module: str = "llm_modules.llm_zephyr.ZephyrLLM"
+    tts_module: str = "tts_modules.tts_coqui.CoquiTTSModule"
+    t2i_module: str = "t2i_modules.t2i_juggernaut.JuggernautT2I"
+    i2v_module: str = "i2v_modules.i2v_ltx.LtxI2V"
+    # t2v_module: str = "t2v_modules.t2v_zeroscope.ZeroscopeT2V"
+    t2v_module: str = "t2v_modules.t2v_ltx.LtxT2V"
 
-@dataclass
-class ModuleSelectorConfig:
-    llm_module: str = "llm_modules.llm_zephyr"
-    tts_module: str = "tts_modules.tts_coqui"
-    t2i_module: str = "t2i_modules.t2i_juggernaut"
-    i2v_module: str = "i2v_modules.i2v_ltx"
-    t2v_module: str = "t2v_modules.t2v_zeroscope"
-
-def clear_vram_globally(*models_or_pipelines_to_del):
-    print(f"Attempting to clear VRAM. Received {len(models_or_pipelines_to_del)} items to delete.")
-    for item in models_or_pipelines_to_del:
-        if hasattr(item, 'cpu'): item.cpu()
-    del models_or_pipelines_to_del 
+def clear_vram_globally(*items_to_del):
+    print(f"Attempting to clear VRAM. Received {len(items_to_del)} items to delete.")
+    for item in items_to_del:
+        if hasattr(item, 'to'):
+            try:
+                item.to('cpu')
+            except Exception as e:
+                print(f"Could not move item of type {type(item)} to CPU: {e}")
+    del items_to_del
     gc.collect()
-    if torch.cuda.is_available(): torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
     print("VRAM clearing attempt finished.")
 
 
@@ -1149,8 +1212,7 @@ def assemble_final_reel(
 
 
 ==== llm_modules/__init__.py ====
-from .llm_zephyr import LLMConfig, generate_script, clear_llm_vram, generate_chunk_visual_prompts
-
+from .llm_zephyr import ZephyrLLM
 
 
 
@@ -1159,281 +1221,166 @@ from .llm_zephyr import LLMConfig, generate_script, clear_llm_vram, generate_chu
 import torch
 import json
 import re
-from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict, Any
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from config_manager import ContentConfig, DEVICE, clear_vram_globally # Use global clear for now
 
-@dataclass
-class LLMConfig:
-    """Configuration for Zephyr LLM model."""
+from base_modules import BaseLLM, BaseModuleConfig
+from config_manager import ContentConfig, DEVICE, clear_vram_globally
+
+class ZephyrLLMConfig(BaseModuleConfig):
     model_id: str = "HuggingFaceH4/zephyr-7b-beta"
-    max_new_tokens_script: int = 1536
-    max_new_tokens_chunk_prompt: int = 256 # Shorter for chunk prompts
+    max_new_tokens_script: int = 2048 # Increased for new fields
+    max_new_tokens_chunk_prompt: int = 256
     temperature: float = 0.7
     top_k: int = 50
     top_p: float = 0.95
 
-MODEL = None
-TOKENIZER = None
-
-def load_model_and_tokenizer(config: LLMConfig):
-    global MODEL, TOKENIZER
-    if MODEL is None or TOKENIZER is None:
-        print(f"Loading LLM: {config.model_id}...")
-        TOKENIZER = AutoTokenizer.from_pretrained(config.model_id)
-        if TOKENIZER.pad_token is None:
-            TOKENIZER.pad_token = TOKENIZER.eos_token
-        
-        # Try to load with device_map="auto" first for multi-GPU or large models
-        try:
-            MODEL = AutoModelForCausalLM.from_pretrained(
-                config.model_id, torch_dtype=torch.float16, device_map="auto"
-            )
-        except Exception as e:
-            print(f"Failed to load LLM with device_map='auto' ({e}), trying with explicit device: {DEVICE}")
-            MODEL = AutoModelForCausalLM.from_pretrained(
-                config.model_id, torch_dtype=torch.float16
-            ).to(DEVICE)
-        print("LLM loaded.")
-    return MODEL, TOKENIZER
-
-def clear_llm_vram():
-    global MODEL, TOKENIZER
-    print("Clearing LLM VRAM...")
-    # Models loaded with device_map="auto" don't need explicit .cpu() before del
-    # but it doesn't hurt to try.
-    models_to_clear = []
-    if MODEL is not None:
-        models_to_clear.append(MODEL)
-    # Tokenizer is usually small, but good practice
-    # if TOKENIZER is not None: models_to_clear.append(TOKENIZER) # Tokenizer isn't a model
+class ZephyrLLM(BaseLLM):
+    Config = ZephyrLLMConfig
     
-    clear_vram_globally(*models_to_clear)
-    MODEL = None
-    TOKENIZER = None # Technically tokenizer doesn't consume much VRAM but good to reset
-    print("LLM VRAM cleared.")
-
-
-def _parse_llm_json_response(decoded_output: str, context: str = "script") -> Optional[Dict]:
-    match = re.search(r'\{[\s\S]*\}', decoded_output)
-    if match:
-        json_text_to_parse = match.group(0)
-    else:
-        json_text_to_parse = decoded_output
-        print(f"Warning: Could not extract a clear JSON block for {context}, attempting to parse full output.")
-
-    try:
-        json_text_to_parse = re.sub(r',(\s*[}\]])', r'\1', json_text_to_parse) # Trailing commas
-        response_data = json.loads(json_text_to_parse)
-        return response_data
-    except json.JSONDecodeError as e:
-        print(f"Error parsing LLM JSON for {context}: {e}. Raw output was:\n{decoded_output}")
-        return None
-
-def generate_script(
-    topic: str, 
-    content_config: ContentConfig, 
-    llm_config: LLMConfig
-) -> Tuple[List[Dict[str, Any]], List[str], List[str]]:
-    model, tokenizer = load_model_and_tokenizer(llm_config)
-    print(f"Generating script and prompts for topic: {topic}")
-    
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an AI assistant creating content for a short video. "
-                "Your response must be in valid JSON format: "
-                "{\"narration\": [{\"scene\": 1, \"text\": \"narration_text\", \"duration_estimate\": float_seconds}], "
-                "\"visuals\": [{\"scene\": 1, \"prompt\": \"visual_prompt_for_scene\"}], "
-                "\"hashtags\": [\"tag1\", \"tag2\"]}"
-            )
-        },
-        {
-            "role": "user",
-            "content": f"""
-            Create content for a short video about "{topic}".
-            The video should be engaging and the total narration should be around {content_config.target_video_length_hint} seconds long.
-            Each narration segment should ideally be around {content_config.max_scene_narration_duration_hint} seconds.
-            Generate between {content_config.min_scenes} and {content_config.max_scenes} narration/visual scenes.
+    def _load_model_and_tokenizer(self):
+        if self.model is None or self.tokenizer is None:
+            print(f"Loading LLM: {self.config.model_id}...")
+            self.tokenizer = AutoTokenizer.from_pretrained(self.config.model_id)
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
             
-            Return your response in this exact JSON format:
-            {{
-                "narration": [
-                    {{"scene": 1, "text": "First scene narration text.", "duration_estimate": {content_config.max_scene_narration_duration_hint}}},
-                    {{"scene": 2, "text": "Second scene narration text.", "duration_estimate": {content_config.max_scene_narration_duration_hint}}}
-                ],
-                "visuals": [
-                    {{"scene": 1, "prompt": "Detailed visual prompt for scene 1, focusing on key elements, style (e.g., cinematic, anime, realistic), camera angles, and mood."}},
-                    {{"scene": 2, "prompt": "Detailed visual prompt for scene 2, similarly descriptive."}}
-                ],
-                "hashtags": ["relevantTag1", "relevantTag2", "relevantTag3"]
-            }}
-            
-            Ensure the 'duration_estimate' is a float representing seconds.
-            Each visual prompt should be detailed and suitable for image/video generation models.
-            The number of narration entries must match the number of visual entries.
-            """
-        }
-    ]
-
-    tokenized_chat = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(model.device)
-    generation_kwargs = {
-        "input_ids": tokenized_chat, "max_new_tokens": llm_config.max_new_tokens_script, 
-        "do_sample": True, "top_k": llm_config.top_k, "top_p": llm_config.top_p, 
-        "temperature": llm_config.temperature, "pad_token_id": tokenizer.eos_token_id
-    }
-
-    outputs = model.generate(**generation_kwargs)
-    decoded_output = tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
-    print("LLM Script Response:\n", decoded_output)
-    
-    response_data = _parse_llm_json_response(decoded_output, "script")
-
-    if response_data:
-        try:
-            # Validate structure (simplified from original for brevity, can be expanded)
-            if not all(k in response_data for k in ["narration", "visuals", "hashtags"]):
-                 raise ValueError("Missing required keys in response")
-            
-            narration_data = sorted(response_data.get("narration", []), key=lambda x: x["scene"])
-            visuals_data = sorted(response_data.get("visuals", []), key=lambda x: x["scene"])
-            
-            narration_scenes = [{"text": s["text"], "duration_estimate": float(s.get("duration_estimate", content_config.max_scene_narration_duration_hint))} for s in narration_data]
-            visual_prompts = [s["prompt"] for s in visuals_data]
-            hashtags = response_data.get("hashtags", [])
-
-            if len(narration_scenes) != len(visual_prompts):
-                raise ValueError("Mismatch between number of narration and visual scenes.")
-            if not (content_config.min_scenes <= len(narration_scenes) <= content_config.max_scenes):
-                 print(f"Warning: Scene count {len(narration_scenes)} outside range [{content_config.min_scenes}, {content_config.max_scenes}]. Adjusting...")
-                 # Could add logic here to trim/pad, or let it proceed. For now, just warn.
-
-            return narration_scenes, visual_prompts, hashtags
-        except (ValueError, KeyError) as e:
-            print(f"Error processing parsed LLM script data: {e}. Using fallback.")
-    
-    # Fallback
-    fallback_duration = content_config.max_scene_narration_duration_hint
-    narration_scenes = [
-        {"text": f"An introduction to {topic}.", "duration_estimate": fallback_duration},
-        {"text": "Exploring details and implications.", "duration_estimate": fallback_duration}
-    ]
-    visual_prompts = [
-        f"Cinematic overview of {topic}, vibrant colors, high detail.",
-        f"Close-up abstract representation related to {topic}, thought-provoking."
-    ]
-    hashtags = [f"#{topic.replace(' ', '')}", "#AIvideo", "#GeneratedContent"]
-    return narration_scenes, visual_prompts, hashtags
-
-
-def generate_chunk_visual_prompts(
-    scene_narration: str,
-    original_scene_prompt: str,
-    num_chunks: int,
-    content_config: ContentConfig,
-    llm_config: LLMConfig
-) -> List[Tuple[str, str]]:  # Now returns tuple of (visual_prompt, motion_prompt)
-    model, tokenizer = load_model_and_tokenizer(llm_config) # Ensures model is loaded
-    print(f"Generating {num_chunks} chunk-specific visual prompts for scene...")
-    
-    chunk_prompts = []
-    
-    for chunk_idx in range(num_chunks):
-        chunk_start_time = chunk_idx * content_config.model_max_video_chunk_duration
-        # A simple way to estimate which part of narration this chunk covers
-        narration_words = scene_narration.split()
-        total_narration_words = len(narration_words)
-        
-        # Estimate words per chunk based on num_chunks and total words
-        words_per_chunk_ideal = total_narration_words / num_chunks
-        start_word_idx = int(chunk_idx * words_per_chunk_ideal)
-        end_word_idx = int((chunk_idx + 1) * words_per_chunk_ideal)
-        current_narration_segment = " ".join(narration_words[start_word_idx:end_word_idx])
-
-        previous_prompt_context = f'Previous chunk showed: "{chunk_prompts[-1][0]}"' if chunk_prompts else 'This is the first chunk of the scene.'
-
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are an AI assistant creating concise visual prompts for short video chunks (around 2-3 seconds). "
-                    "Make sure to keep it stick to the original topic, scene prompt, elements, characters and envioroment."
-                    "Always pass the style and the mood of the original scene prompt to your response as it will be seen in isolation and still we want to keep the style and the mood of the original scene prompt."
-                    "Visual prompt should describe the content, subject and environment in very details that we want ot show in the chunk. not just a general description of the scene"
-                    "if required tell more details about subject like race age gender, if element then tell more details about type, look, material, color, etc."
-                    "Do not use Text Overlays or text content in any prompt"
-                    "DO not use any text content in any prompt"
-                    "Each prompt should describe a static image and no motion or video related description in visual prompt."
-                    "For each chunk, you need to generate TWO prompts:\n"
-                    "1. A visual prompt describing what to show (for image generation)\n"
-                    "2. A motion prompt describing how the scene should move/transition (for video generation)\n"
-                    "Keep both prompts under 77 tokens. Ensure visual continuity with the previous chunk and original style."
-                    "Respond in JSON: {\"visual_prompt\": \"your_visual_prompt\", \"motion_prompt\": \"your_motion_prompt\"}"
+            try:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.config.model_id, torch_dtype=torch.float16, device_map="auto"
                 )
-            },
-            {
-                "role": "user",
-                "content": f"""
-                Original scene visual prompt: "{original_scene_prompt}"
-                Narration for this scene: "{scene_narration}"
-                This specific chunk ({chunk_idx + 1}/{num_chunks}) should visually represent: "{current_narration_segment if current_narration_segment else 'a continuation or a general aspect of the scene'}"
-                {previous_prompt_context}
-                
-                Generate TWO concise prompts for this chunk:
-                1. A visual prompt describing what to show (for image generation)
-                2. A motion prompt describing how the scene should move/transition (for video generation)
-                
-                Return your response in this exact JSON format:
-                {{
-                    "visual_prompt": "A short, focused visual prompt (max 77 tokens) for this 2-3 second chunk, consistent with original style and previous chunk.",
-                    "motion_prompt": "A short description of how the scene should move or transition (max 77 tokens), e.g., 'slow pan left', 'zoom in', 'smooth transition', etc."
-                }}
-                """
+            except Exception as e:
+                print(f"Failed to load LLM with device_map='auto' ({e}), trying with explicit device: {DEVICE}")
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.config.model_id, torch_dtype=torch.float16
+                ).to(DEVICE)
+            print("LLM loaded.")
+
+    def clear_vram(self):
+        print("Clearing LLM VRAM...")
+        models_to_clear = [m for m in [self.model] if m is not None]
+        if models_to_clear: clear_vram_globally(*models_to_clear)
+        self.model, self.tokenizer = None, None
+        print("LLM VRAM cleared.")
+
+    def _parse_llm_json_response(self, decoded_output: str, context: str = "script") -> Optional[Dict]:
+        match = re.search(r'\{[\s\S]*\}', decoded_output)
+        json_text = match.group(0) if match else decoded_output
+        try:
+            return json.loads(re.sub(r',(\s*[}\]])', r'\1', json_text))
+        except json.JSONDecodeError as e:
+            print(f"Error parsing LLM JSON for {context}: {e}. Raw output:\n{decoded_output}")
+            return None
+
+    def generate_script(self, topic: str, content_config: ContentConfig) -> Dict[str, Any]:
+        self._load_model_and_tokenizer()
+        print(f"Generating script and context for topic: {topic}")
+        
+        system_prompt = (
+            "You are an AI assistant creating content for a short video. "
+            "First, describe the main subject and the general setting. "
+            "Then, create the narration, visuals, and hashtags. "
+            "Your response must be a single, valid JSON object with these exact keys: "
+            "\"main_subject_description\", \"setting_description\", \"narration\", \"visuals\", \"hashtags\"."
+        )
+        
+        user_prompt = f"""
+        Create content for a short video about "{topic}".
+        The total narration should be ~{content_config.target_video_length_hint}s, with {content_config.min_scenes} to {content_config.max_scenes} scenes.
+        Each scene's narration should be ~{content_config.max_scene_narration_duration_hint}s.
+        
+        Return your response in this exact JSON format:
+        {{
+            "main_subject_description": "A detailed, consistent description of the main character or subject (e.g., 'Fluffy, a chubby but cute orange tabby cat with green eyes').",
+            "setting_description": "A description of the primary environment (e.g., 'a cozy, sunlit living room with plush furniture').",
+            "narration": [
+                {{"scene": 1, "text": "First scene narration text.", "duration_estimate": {content_config.max_scene_narration_duration_hint}}}
+            ],
+            "visuals": [
+                {{"scene": 1, "prompt": "Detailed visual prompt for scene 1, focusing on key elements, style, and mood."}}
+            ],
+            "hashtags": ["relevantTag1", "relevantTag2"]
+        }}
+        """
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+
+        tokenized_chat = self.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(self.model.device)
+        outputs = self.model.generate(
+            input_ids=tokenized_chat, max_new_tokens=self.config.max_new_tokens_script, 
+            do_sample=True, top_k=self.config.top_k, top_p=self.config.top_p, 
+            temperature=self.config.temperature, pad_token_id=self.tokenizer.eos_token_id
+        )
+        decoded_output = self.tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
+        response_data = self._parse_llm_json_response(decoded_output, "script")
+
+        if response_data and all(k in response_data for k in ["narration", "visuals", "main_subject_description"]):
+            # Reformat for what ProjectManager expects
+            return {
+                "main_subject_description": response_data.get("main_subject_description"),
+                "setting_description": response_data.get("setting_description"),
+                "narration": sorted(response_data.get("narration", []), key=lambda x: x["scene"]),
+                "visuals": [p["prompt"] for p in sorted(response_data.get("visuals", []), key=lambda x: x["scene"])],
+                "hashtags": response_data.get("hashtags", [])
             }
-        ]
-        tokenized_chat = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(model.device)
-        generation_kwargs = {
-            "input_ids": tokenized_chat, "max_new_tokens": llm_config.max_new_tokens_chunk_prompt, 
-            "do_sample": True, "top_k": llm_config.top_k, "top_p": llm_config.top_p, 
-            "temperature": llm_config.temperature, "pad_token_id": tokenizer.eos_token_id
+        
+        print("LLM script generation failed or gave invalid format. Using fallback.")
+        return {
+            "main_subject_description": topic, "setting_description": "a simple background",
+            "narration": [{"text": f"An intro to {topic}.", "duration_estimate": 5.0}],
+            "visuals": [f"Cinematic overview of {topic}."], "hashtags": [f"#{topic.replace(' ', '')}"]
         }
-        outputs = model.generate(**generation_kwargs)
-        decoded_output = tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
-        
-        response_data = _parse_llm_json_response(decoded_output, f"chunk {chunk_idx+1} prompt")
-        
-        visual_prompt = None
-        motion_prompt = None
-        if response_data and "visual_prompt" in response_data and "motion_prompt" in response_data:
-            visual_prompt = response_data["visual_prompt"]
-            motion_prompt = response_data["motion_prompt"]
-        
-        if not visual_prompt or not motion_prompt:
-            print(f"Using fallback prompts for chunk {chunk_idx + 1}")
-            if chunk_prompts: # If there's a previous prompt, try to make it a continuation
-                 visual_prompt = f"Continuing the scene: {original_scene_prompt[:50]}, focusing on '{current_narration_segment[:30]}...'"
-                 motion_prompt = "Smooth continuation of the scene with subtle movement"
-            else: # First chunk or isolated fallback
-                 visual_prompt = f"{original_scene_prompt[:60]}, segment {chunk_idx+1} focusing on '{current_narration_segment[:30]}...'"
-                 motion_prompt = "Gentle camera movement to establish the scene"
-            # Ensure it's not overly long
-            visual_prompt = (visual_prompt[:150] + '...') if len(visual_prompt) > 150 else visual_prompt
-            motion_prompt = (motion_prompt[:150] + '...') if len(motion_prompt) > 150 else motion_prompt
 
-        chunk_prompts.append((visual_prompt, motion_prompt))
-        print(f"Generated prompts for chunk {chunk_idx + 1}:")
-        print(f"  Visual: \"{visual_prompt[:60]}...\"")
-        print(f"  Motion: \"{motion_prompt[:60]}...\"")
+    def generate_chunk_visual_prompts(self, scene_narration: str, original_scene_prompt: str, num_chunks: int, content_config: ContentConfig, main_subject: str, setting: str) -> List[Tuple[str, str]]:
+        self._load_model_and_tokenizer()
+        chunk_prompts = []
+        for chunk_idx in range(num_chunks):
+            # The context is now a mandatory part of the prompt to the LLM
+            system_prompt = (
+                "You are an AI assistant. Your task is to generate a 'visual_prompt' and a 'motion_prompt' for a short video chunk. "
+                "The prompts MUST incorporate the provided main subject and setting. Do NOT change the subject. "
+                "Respond in this exact JSON format: {\"visual_prompt\": \"...\", \"motion_prompt\": \"...\"}"
+            )
+            user_prompt = f"""
+            **Main Subject (MUST BE INCLUDED):** {main_subject}
+            **Setting (MUST BE INCLUDED):** {setting}
+            
+            ---
+            **Original Scene Goal:** "{original_scene_prompt}"
+            **This Chunk's Narration:** "{scene_narration}"
+            
+            Based on ALL the information above, create a visual and motion prompt for chunk {chunk_idx + 1}/{num_chunks}.
+            The visual prompt should be a specific, detailed moment consistent with the subject and setting.
+            """
+            
+            messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+            tokenized_chat = self.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(self.model.device)
+            outputs = self.model.generate(
+                input_ids=tokenized_chat, max_new_tokens=self.config.max_new_tokens_chunk_prompt, 
+                do_sample=True, temperature=self.config.temperature, pad_token_id=self.tokenizer.eos_token_id
+            )
+            decoded_output = self.tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
+            response_data = self._parse_llm_json_response(decoded_output, f"chunk {chunk_idx+1} prompt")
 
-    return chunk_prompts
+            visual_prompt, motion_prompt = None, None
+            if isinstance(response_data, dict):
+                visual_prompt = response_data.get("visual_prompt") if isinstance(response_data.get("visual_prompt"), str) else None
+                motion_prompt = response_data.get("motion_prompt") if isinstance(response_data.get("motion_prompt"), str) else None
+
+            if not visual_prompt or not motion_prompt:
+                print(f"Using fallback prompts for chunk {chunk_idx + 1}")
+                visual_prompt = f"{main_subject} in {setting}, {original_scene_prompt}"
+                motion_prompt = "gentle camera movement"
+
+            chunk_prompts.append((visual_prompt, motion_prompt))
+            print(f"  > Chunk {chunk_idx+1} Visual: \"{visual_prompt[:80]}...\"")
+            print(f"  > Chunk {chunk_idx+1} Motion: \"{motion_prompt[:80]}...\"")
+        
+        return chunk_prompts
 
 
 
 ==== tts_modules/__init__.py ====
-from .tts_coqui import TTSConfig, generate_audio
-
+from .tts_coqui import CoquiTTSModule
 
 
 
@@ -1442,599 +1389,628 @@ from .tts_coqui import TTSConfig, generate_audio
 import os
 import torch
 import numpy as np
-from dataclasses import dataclass
 from typing import Tuple, Optional
 from TTS.api import TTS as CoquiTTS
-from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip
-from moviepy.audio.AudioClip import concatenate_audioclips, AudioClip 
-from moviepy.video.fx.Crop import Crop # Correct import based on your docs
+from moviepy import AudioFileClip
+from scipy.io import wavfile
 
-from scipy.io import wavfile # For fallback silent audio
+from base_modules import BaseTTS, BaseModuleConfig
 from config_manager import DEVICE, clear_vram_globally
 
-@dataclass
-class TTSConfig:
-    """Configuration for Coqui TTS model."""
+class CoquiTTSConfig(BaseModuleConfig):
     model_id: str = "tts_models/multilingual/multi-dataset/xtts_v2"
     speaker_language: str = "en"
 
-TTS_MODEL = None
+class CoquiTTSModule(BaseTTS):
+    Config = CoquiTTSConfig
 
-def load_model(config: TTSConfig):
-    global TTS_MODEL
-    if TTS_MODEL is None:
-        print(f"Loading TTS model: {config.model_id}...")
-        TTS_MODEL = CoquiTTS(model_name=config.model_id, progress_bar=True).to(DEVICE)
-        print("TTS model loaded.")
-    return TTS_MODEL
+    def _load_model(self):
+        if self.model is None:
+            print(f"Loading TTS model: {self.config.model_id}...")
+            self.model = CoquiTTS(model_name=self.config.model_id, progress_bar=True).to(DEVICE)
+            print("TTS model loaded.")
+    
+    def clear_vram(self):
+        print("Clearing TTS VRAM...")
+        if self.model is not None:
+            clear_vram_globally(self.model)
+        self.model = None
+        print("TTS VRAM cleared.")
 
-def clear_tts_vram():
-    global TTS_MODEL
-    print("Clearing TTS VRAM...")
-    models_to_clear = []
-    if TTS_MODEL is not None:
-        # Coqui TTS objects don't always have a .cpu() method directly on the main object
-        # but components might. For now, direct deletion and gc is the primary method.
-        # If specific offloading methods are known for Coqui TTS, they can be added.
-        models_to_clear.append(TTS_MODEL) 
-    
-    clear_vram_globally(*models_to_clear)
-    TTS_MODEL = None
-    print("TTS VRAM cleared.")
+    def generate_audio(
+        self, text: str, output_dir: str, scene_idx: int, speaker_wav: Optional[str] = None
+    ) -> Tuple[str, float]:
+        self._load_model()
+        
+        print(f"Generating audio for scene {scene_idx}: \"{text[:50]}...\"")
+        output_path = os.path.join(output_dir, f"scene_{scene_idx}_audio.wav")
+        
+        tts_kwargs = {"language": self.config.speaker_language, "file_path": output_path}
+        
+        if "xtts" in self.config.model_id.lower():
+            if speaker_wav and os.path.exists(speaker_wav):
+                tts_kwargs["speaker_wav"] = speaker_wav
+            else:
+                if speaker_wav: print(f"Warning: Speaker WAV {speaker_wav} not found. XTTS using default voice.")
+        
+        self.model.tts_to_file(text, **tts_kwargs)
+        
+        duration = 0.0
+        try:
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                with AudioFileClip(output_path) as audio_clip:
+                    duration = audio_clip.duration + 0.1 # Small buffer
+            else: raise ValueError("Audio file not generated or is empty.")
+        except Exception as e:
+            print(f"Error getting duration for {output_path}: {e}. Creating fallback.")
+            samplerate = 22050 
+            wavfile.write(output_path, samplerate, np.zeros(int(0.1 * samplerate), dtype=np.int16))
+            duration = 0.1
 
-def generate_audio(
-    text: str, 
-    output_dir: str, 
-    scene_idx: int, 
-    tts_config: TTSConfig,
-    speaker_wav: Optional[str] = None
-) -> Tuple[str, float]:
-    model = load_model(tts_config) # Ensures model is loaded
-    
-    print(f"Generating audio for scene {scene_idx}: \"{text[:50]}...\"")
-    output_path = os.path.join(output_dir, f"scene_{scene_idx}_audio.wav")
-    
-    tts_kwargs = {"language": tts_config.speaker_language, "file_path": output_path}
-    
-    if "xtts" in tts_config.model_id.lower():
-        if speaker_wav and os.path.exists(speaker_wav):
-            tts_kwargs["speaker_wav"] = speaker_wav
-        else:
-            if speaker_wav: print(f"Warning: Speaker WAV {speaker_wav} not found. XTTS using default voice.")
-            else: print("Warning: XTTS model, but no speaker_wav. Using default voice.")
-    
-    model.tts_to_file(text, **tts_kwargs)
-    print(f"Audio for scene {scene_idx} saved to {output_path}")
-    
-    duration = 0.0
-    try:
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            with AudioFileClip(output_path) as audio_clip:
-                duration = audio_clip.duration
-            duration += 0.1 # Small buffer often good for TTS
-        else:
-            raise ValueError("Audio file not generated or is empty.")
-    except Exception as e:
-        print(f"Error getting duration for {output_path}: {e}. Creating fallback silent audio.")
-        samplerate = 22050 
-        silence_data = np.zeros(int(0.1 * samplerate), dtype=np.int16)
-        wavfile.write(output_path, samplerate, silence_data)
-        duration = 0.1
-        print(f"Wrote fallback silent audio to {output_path}")
-
-    print(f"Actual audio duration for scene {scene_idx}: {duration:.2f}s")
-    return output_path, duration
+        print(f"Actual audio duration for scene {scene_idx}: {duration:.2f}s")
+        return output_path, duration
 
 
 
 ==== t2i_modules/__init__.py ====
-from .t2i_sdxl import T2IConfig, generate_image, clear_t2i_vram
-
+from .t2i_juggernaut import JuggernautT2I
+from .t2i_sdxl import SdxlT2I
 
 
 
 ==== t2i_modules/t2i_juggernaut.py ====
-# t2i_modules/t2i_sdxl.py
-import os
+# t2i_modules/t2i_juggernaut.py
 import torch
-from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
+
+from base_modules import BaseT2I, BaseModuleConfig
 from config_manager import DEVICE, clear_vram_globally
 
-@dataclass
-class T2IConfig:
+class JuggernautT2IConfig(BaseModuleConfig):
     model_id: str = "RunDiffusion/Juggernaut-XL-v9"
-    refiner_id: Optional[str] = None; 
+    refiner_id: Optional[str] = None
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
-    base_denoising_end: float = 0.8 
-    refiner_denoising_start: float = 0.8
 
-T2I_PIPE, REFINER_PIPE = None, None
+class JuggernautT2I(BaseT2I):
+    Config = JuggernautT2IConfig
 
-def get_model_capabilities() -> dict:
-    """Returns the optimal settings for the SDXL model."""
-    return {
-        "resolutions": {
-            "Portrait": (896, 1152),
-            "Landscape": (1344, 768),
-        },
-        # As this is an image model, it doesn't dictate chunk duration.
-        # We can return a reasonable default that the I2V model will use.
-        "max_chunk_duration": 3.0 
-    }
+    def __init__(self, config: JuggernautT2IConfig):
+        super().__init__(config)
+        self.refiner_pipe = None
 
-def load_pipeline(config: T2IConfig):
-    global T2I_PIPE, REFINER_PIPE
-    if T2I_PIPE is None:
-        print(f"Loading T2I pipeline (SDXL): {config.model_id}...")
-        T2I_PIPE = StableDiffusionXLPipeline.from_pretrained(config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True).to(DEVICE)
-        print("SDXL Base pipeline loaded.")
-        if config.refiner_id:
-            print(f"Loading T2I Refiner pipeline: {config.refiner_id}...")
-            REFINER_PIPE = DiffusionPipeline.from_pretrained(config.refiner_id, text_encoder_2=T2I_PIPE.text_encoder_2, vae=T2I_PIPE.vae, torch_dtype=torch.float16, use_safetensors=True, variant="fp16").to(DEVICE)
-            print("SDXL Refiner pipeline loaded.")
-    return T2I_PIPE, REFINER_PIPE
+    def get_model_capabilities(self) -> Dict[str, Any]:
+        return {
+            "resolutions": {"Portrait": (896, 1152), "Landscape": (1344, 768)},
+            "max_chunk_duration": 3.0 
+        }
 
-def clear_t2i_vram():
-    global T2I_PIPE, REFINER_PIPE
-    print("Clearing T2I (SDXL) VRAM...")
-    models = [m for m in [T2I_PIPE, REFINER_PIPE] if m is not None]
-    if models: clear_vram_globally(*models)
-    T2I_PIPE, REFINER_PIPE = None, None
-    print("T2I (SDXL) VRAM cleared.")
+    def _load_pipeline(self):
+        if self.pipe is None:
+            print(f"Loading T2I pipeline (Juggernaut): {self.config.model_id}...")
+            self.pipe = StableDiffusionXLPipeline.from_pretrained(
+                self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+            ).to(DEVICE)
+            print("Juggernaut Base pipeline loaded.")
+            if self.config.refiner_id:
+                # This part is simplified as Juggernaut doesn't typically use a refiner
+                print(f"Refiner specified but not typically used with Juggernaut, skipping load.")
 
-def generate_image(prompt: str, output_path: str, width: int, height: int, t2i_config: T2IConfig) -> str:
-    pipe, refiner = load_pipeline(t2i_config)
-    print(f"SDXL generating image with requested resolution: {width}x{height}")
-    kwargs = {"prompt": prompt, "width": width, "height": height, "num_inference_steps": t2i_config.num_inference_steps, "guidance_scale": t2i_config.guidance_scale}
-    if refiner:
-        kwargs["output_type"] = "latent"; kwargs["denoising_end"] = t2i_config.base_denoising_end
+    def clear_vram(self):
+        print("Clearing T2I (Juggernaut) VRAM...")
+        models = [m for m in [self.pipe, self.refiner_pipe] if m is not None]
+        if models: clear_vram_globally(*models)
+        self.pipe, self.refiner_pipe = None, None
+        print("T2I (Juggernaut) VRAM cleared.")
 
-    negative_prompt = "blurry, low resolution, bad anatomy"
-    guidance_scale = 8.0
-    
-    image = pipe(**kwargs).images[0]
-    if refiner:
-        print("Refining image...")
-        image = refiner(prompt=prompt, negative_prompt=negative_prompt, image=image, denoising_start=t2i_config.refiner_denoising_start, guidance_scale=guidance_scale, num_inference_steps=t2i_config.num_inference_steps).images[0]
-    
-    image.save(output_path)
-    print(f"Image saved to {output_path}")
-    return output_path
+    def generate_image(self, prompt: str, output_path: str, width: int, height: int) -> str:
+        self._load_pipeline()
+        print(f"Juggernaut generating image with resolution: {width}x{height}")
+        
+        image = self.pipe(
+            prompt=prompt,
+            width=width,
+            height=height,
+            num_inference_steps=self.config.num_inference_steps,
+            guidance_scale=self.config.guidance_scale
+        ).images[0]
+        
+        image.save(output_path)
+        print(f"Image saved to {output_path}")
+        return output_path
 
 
 
 ==== t2i_modules/t2i_sdxl.py ====
 # t2i_modules/t2i_sdxl.py
-import os
 import torch
-from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
+
+from base_modules import BaseT2I, BaseModuleConfig
 from config_manager import DEVICE, clear_vram_globally
 
-@dataclass
-class T2IConfig:
+class SdxlT2IConfig(BaseModuleConfig):
     model_id: str = "stabilityai/stable-diffusion-xl-base-1.0"
     refiner_id: Optional[str] = "stabilityai/stable-diffusion-xl-refiner-1.0"
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
-    base_denoising_end: float = 0.8 
+    base_denoising_end: float = 0.8
     refiner_denoising_start: float = 0.8
 
-T2I_PIPE, REFINER_PIPE = None, None
-
-def get_model_capabilities() -> dict:
-    """Returns the optimal settings for the SDXL model."""
-    return {
-        "resolutions": {
-            "Portrait": (896, 1152),
-            "Landscape": (1344, 768),
-        },
-        # As this is an image model, it doesn't dictate chunk duration.
-        # We can return a reasonable default that the I2V model will use.
-        "max_chunk_duration": 3.0 
-    }
-
-def load_pipeline(config: T2IConfig):
-    global T2I_PIPE, REFINER_PIPE
-    if T2I_PIPE is None:
-        print(f"Loading T2I pipeline (SDXL): {config.model_id}...")
-        T2I_PIPE = StableDiffusionXLPipeline.from_pretrained(config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True).to(DEVICE)
-        print("SDXL Base pipeline loaded.")
-        if config.refiner_id:
-            print(f"Loading T2I Refiner pipeline: {config.refiner_id}...")
-            REFINER_PIPE = DiffusionPipeline.from_pretrained(config.refiner_id, text_encoder_2=T2I_PIPE.text_encoder_2, vae=T2I_PIPE.vae, torch_dtype=torch.float16, use_safetensors=True, variant="fp16").to(DEVICE)
-            print("SDXL Refiner pipeline loaded.")
-    return T2I_PIPE, REFINER_PIPE
-
-def clear_t2i_vram():
-    global T2I_PIPE, REFINER_PIPE
-    print("Clearing T2I (SDXL) VRAM...")
-    models = [m for m in [T2I_PIPE, REFINER_PIPE] if m is not None]
-    if models: clear_vram_globally(*models)
-    T2I_PIPE, REFINER_PIPE = None, None
-    print("T2I (SDXL) VRAM cleared.")
-
-def generate_image(prompt: str, output_path: str, width: int, height: int, t2i_config: T2IConfig) -> str:
-    pipe, refiner = load_pipeline(t2i_config)
-    print(f"SDXL generating image with requested resolution: {width}x{height}")
-    kwargs = {"prompt": prompt, "width": width, "height": height, "num_inference_steps": t2i_config.num_inference_steps, "guidance_scale": t2i_config.guidance_scale}
-    if refiner:
-        kwargs["output_type"] = "latent"; kwargs["denoising_end"] = t2i_config.base_denoising_end
+class SdxlT2I(BaseT2I):
+    Config = SdxlT2IConfig
     
-    image = pipe(**kwargs).images[0]
-    if refiner:
-        print("Refining image...")
-        image = refiner(prompt=prompt, image=image, denoising_start=t2i_config.refiner_denoising_start, num_inference_steps=t2i_config.num_inference_steps).images[0]
-    
-    image.save(output_path)
-    print(f"Image saved to {output_path}")
-    return output_path
+    def __init__(self, config: SdxlT2IConfig):
+        super().__init__(config)
+        self.refiner_pipe = None
+
+    def get_model_capabilities(self) -> Dict[str, Any]:
+        return {
+            "resolutions": {"Portrait": (896, 1152), "Landscape": (1344, 768)},
+            "max_chunk_duration": 3.0
+        }
+
+    def _load_pipeline(self):
+        if self.pipe is None:
+            print(f"Loading T2I pipeline (SDXL): {self.config.model_id}...")
+            self.pipe = StableDiffusionXLPipeline.from_pretrained(
+                self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+            ).to(DEVICE)
+            print("SDXL Base pipeline loaded.")
+            if self.config.refiner_id:
+                print(f"Loading T2I Refiner pipeline: {self.config.refiner_id}...")
+                self.refiner_pipe = DiffusionPipeline.from_pretrained(
+                    self.config.refiner_id, text_encoder_2=self.pipe.text_encoder_2,
+                    vae=self.pipe.vae, torch_dtype=torch.float16,
+                    use_safetensors=True, variant="fp16"
+                ).to(DEVICE)
+                print("SDXL Refiner pipeline loaded.")
+
+    def clear_vram(self):
+        print("Clearing T2I (SDXL) VRAM...")
+        models = [m for m in [self.pipe, self.refiner_pipe] if m is not None]
+        if models: clear_vram_globally(*models)
+        self.pipe, self.refiner_pipe = None, None
+        print("T2I (SDXL) VRAM cleared.")
+
+    def generate_image(self, prompt: str, output_path: str, width: int, height: int) -> str:
+        self._load_pipeline()
+        
+        kwargs = {
+            "prompt": prompt, "width": width, "height": height,
+            "num_inference_steps": self.config.num_inference_steps,
+            "guidance_scale": self.config.guidance_scale
+        }
+        if self.refiner_pipe:
+            kwargs["output_type"] = "latent"
+            kwargs["denoising_end"] = self.config.base_denoising_end
+
+        image = self.pipe(**kwargs).images[0]
+        
+        if self.refiner_pipe:
+            print("Refining image...")
+            image = self.refiner_pipe(
+                prompt=prompt, image=image,
+                denoising_start=self.config.refiner_denoising_start,
+                num_inference_steps=self.config.num_inference_steps
+            ).images[0]
+        
+        image.save(output_path)
+        print(f"Image saved to {output_path}")
+        return output_path
 
 
 
 ==== i2v_modules/i2v_ltx.py ====
 # i2v_modules/i2v_ltx.py
-
-import os
 import torch
-from dataclasses import dataclass
+from typing import Dict, Any, Optional
 from diffusers import LTXImageToVideoPipeline
 from diffusers.utils import export_to_video, load_image
-# --- We need to import ContentConfig ---
-from config_manager import DEVICE, clear_vram_globally, ContentConfig
 from PIL import Image
-import numpy as np
 
-@dataclass
-class I2VConfig:
-    """Configuration for the LTX Video Generator pipeline."""
+from base_modules import BaseI2V, BaseModuleConfig
+from config_manager import DEVICE, clear_vram_globally, ContentConfig
+
+class LtxI2VConfig(BaseModuleConfig):
     model_id: str = "Lightricks/LTX-Video"
     num_inference_steps: int = 50
     guidance_scale: float = 7.5
-    width: int = 704
-    height: int = 480
-    fps: int = 24
 
-I2V_PIPE = None
+class LtxI2V(BaseI2V):
+    Config = LtxI2VConfig
 
-def get_model_capabilities() -> dict:
-    """Returns the optimal settings for the LTX model."""
-    return {
-        "resolutions": { 
-            "Portrait": (480, 704),
-            "Landscape": (704, 480)
-        },
-        "max_chunk_duration": 2.5 
-    }
-
-def load_pipeline(config: I2VConfig):
-    global I2V_PIPE
-    if I2V_PIPE is None:
-        print(f"Loading I2V pipeline (LTX): {config.model_id}...")
-        I2V_PIPE = LTXImageToVideoPipeline.from_pretrained(config.model_id, torch_dtype=torch.bfloat16)
-        I2V_PIPE.enable_model_cpu_offload()
-        print("I2V (LTX) pipeline loaded.")
-    return I2V_PIPE
-
-def clear_i2v_vram():
-    global I2V_PIPE
-    print("Clearing I2V (LTX) VRAM...")
-    if I2V_PIPE is not None:
-        clear_vram_globally(I2V_PIPE)
-    I2V_PIPE = None
-    print("I2V (LTX) VRAM cleared.")
-
-def _resize_and_pad(image: Image.Image, target_width: int, target_height: int) -> Image.Image:
-    original_aspect = image.width / image.height
-    target_aspect = target_width / target_height
-    if original_aspect > target_aspect:
-        new_width = target_width; new_height = int(target_width / original_aspect)
-    else:
-        new_height = target_height; new_width = int(target_height * original_aspect)
-    if new_width <= 0 or new_height <= 0: new_width, new_height = 1, 1
-    resized_image = image.resize((new_width, new_height), Image.LANCZOS)
-    background = Image.new('RGB', (target_width, target_height), (0, 0, 0))
-    paste_x = (target_width - new_width) // 2
-    paste_y = (target_height - new_height) // 2
-    background.paste(resized_image, (paste_x, paste_y))
-    return background
-
-# #############################################################################
-# # --- UPDATED FUNCTION SIGNATURE ---
-# #############################################################################
-def generate_video_from_image(
-    image_path: str,
-    output_video_path: str,
-    target_duration: float,
-    content_config: ContentConfig, # <-- It now accepts the main config
-    i2v_config: I2VConfig,
-    visual_prompt: str,
-    motion_prompt: str = None
-) -> str:
-    pipe = load_pipeline(i2v_config)
-    print(f"I2V (LTX): Received request for chunk with target duration: {target_duration:.2f}s.")
-
-    input_image = load_image(image_path)
+    def get_model_capabilities(self) -> Dict[str, Any]:
+        return {
+            "resolutions": {"Portrait": (480, 704), "Landscape": (704, 480)},
+            "max_chunk_duration": 5 
+        }
     
-    target_res_map = get_model_capabilities()["resolutions"]
-    aspect_ratio = "Landscape" if input_image.width > input_image.height else "Portrait"
-    target_width, target_height = target_res_map[aspect_ratio]
-    
-    print(f"Preparing input image for LTX target size: {target_width}x{target_height}")
-    prepared_image = _resize_and_pad(input_image, target_width, target_height)
+    def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
+        # SVD doesn't use text prompts, but this shows how you could add model-specific keywords.
+        # For example, for a different model you might do:
+        if prompt_type == "visual":
+           return f"{prompt}, 8k, photorealistic, cinematic lighting"
+        return prompt # Return original for SVD
 
-    # --- THIS MODULE NOW GETS FPS FROM THE CONFIG ITSELF ---
-    fps = content_config.fps
-    num_frames = max(16, int(target_duration * fps))
-    print(f"Requesting LTX to generate {num_frames} frames at {fps} FPS.")
+    def _load_pipeline(self):
+        if self.pipe is None:
+            print(f"Loading I2V pipeline (LTX): {self.config.model_id}...")
+            self.pipe = LTXImageToVideoPipeline.from_pretrained(self.config.model_id, torch_dtype=torch.bfloat16)
+            self.pipe.enable_model_cpu_offload()
+            print("I2V (LTX) pipeline loaded.")
 
-    full_prompt = f"{visual_prompt}, {motion_prompt}" if motion_prompt else visual_prompt
-    negative_prompt = "worst quality, inconsistent motion, blurry, jittery, distorted"
+    def clear_vram(self):
+        print("Clearing I2V (LTX) VRAM...")
+        if self.pipe is not None: clear_vram_globally(self.pipe)
+        self.pipe = None
+        print("I2V (LTX) VRAM cleared.")
 
-    video = pipe(
-        prompt=full_prompt,
-        image=prepared_image,
-        width=target_width,
-        height=target_height,
-        num_frames=num_frames,
-        num_inference_steps=i2v_config.num_inference_steps,
-        guidance_scale=i2v_config.guidance_scale,
-        negative_prompt=negative_prompt
-    ).frames[0]
-    
-    export_to_video(video, output_video_path, fps=fps)
-    
-    print(f"LTX video chunk ({len(video)}f) saved to {output_video_path}")
-    return output_video_path
+    def _resize_and_pad(self, image: Image.Image, target_width: int, target_height: int) -> Image.Image:
+        original_aspect = image.width / image.height; target_aspect = target_width / target_height
+        if original_aspect > target_aspect: new_width, new_height = target_width, int(target_width / original_aspect)
+        else: new_height, new_width = target_height, int(target_height * original_aspect)
+        resized_image = image.resize((new_width, new_height), Image.LANCZOS)
+        background = Image.new('RGB', (target_width, target_height), (0, 0, 0))
+        background.paste(resized_image, ((target_width - new_width) // 2, (target_height - new_height) // 2))
+        return background
+
+    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str]) -> str:
+        self._load_pipeline()
+        
+        input_image = load_image(image_path)
+        target_res = self.get_model_capabilities()["resolutions"]
+        aspect_ratio = "Landscape" if input_image.width > input_image.height else "Portrait"
+        target_width, target_height = target_res[aspect_ratio]
+        prepared_image = self._resize_and_pad(input_image, target_width, target_height)
+
+        num_frames = max(16, int(target_duration * content_config.fps))
+        full_prompt = f"{visual_prompt}, {motion_prompt}" if motion_prompt else visual_prompt
+        
+        video = self.pipe(
+            prompt=full_prompt, image=prepared_image, width=target_width, height=target_height,
+            num_frames=num_frames, num_inference_steps=self.config.num_inference_steps,
+            guidance_scale=self.config.guidance_scale,
+            negative_prompt="worst quality, inconsistent motion, blurry"
+        ).frames[0]
+        
+        export_to_video(video, output_video_path, fps=content_config.fps)
+        print(f"LTX video chunk saved to {output_video_path}")
+        return output_video_path
 
 
 
 ==== i2v_modules/i2v_svd.py ====
 # i2v_modules/i2v_svd.py
-
-import os
 import torch
-from dataclasses import dataclass
+from typing import Dict, Any, Optional
 from diffusers import StableVideoDiffusionPipeline
 from diffusers.utils import load_image, export_to_video
-# --- We need to import ContentConfig to use it in the function signature ---
-from config_manager import DEVICE, clear_vram_globally, ContentConfig
 from PIL import Image
 
-@dataclass
-class I2VConfig:
-    """Configuration for Stable Video Diffusion (SVD) model."""
+from base_modules import BaseI2V, BaseModuleConfig
+from config_manager import DEVICE, clear_vram_globally, ContentConfig
+
+class SvdI2VConfig(BaseModuleConfig):
     model_id: str = "stabilityai/stable-video-diffusion-img2vid-xt"
     decode_chunk_size: int = 8
     motion_bucket_id: int = 127
     noise_aug_strength: float = 0.02
     model_native_frames: int = 25
-    svd_min_frames: int = 8
 
-I2V_PIPE = None
+class SvdI2V(BaseI2V):
+    Config = SvdI2VConfig
 
-# #############################################################################
-# # --- NEW: Added model capabilities function for consistency ---
-# #############################################################################
-def get_model_capabilities() -> dict:
-    """Returns the optimal settings for the SVD-XT model."""
-    return {
-        "resolutions": {
-            # This model works best with these resolutions.
-            "Portrait": (576, 1024),
-            "Landscape": (1024, 576),
-        },
-        # SVD generates 25 frames, which works well for up to 3s clips.
-        "max_chunk_duration": 3.0 
-    }
-
-def load_pipeline(config: I2VConfig):
-    global I2V_PIPE
-    if I2V_PIPE is None:
-        print(f"Loading I2V pipeline (SVD): {config.model_id}...")
-        I2V_PIPE = StableVideoDiffusionPipeline.from_pretrained(
-            config.model_id, 
-            torch_dtype=torch.float16
-            # REMOVED: variant="fp16" for better compatibility
-        )
-        I2V_PIPE.enable_model_cpu_offload()
-        print("I2V (SVD) pipeline loaded.")
-    return I2V_PIPE
-
-def clear_i2v_vram():
-    global I2V_PIPE
-    print("Clearing I2V (SVD) VRAM...")
-    if I2V_PIPE is not None:
-        clear_vram_globally(I2V_PIPE)
-    I2V_PIPE = None
-    print("I2V (SVD) VRAM cleared.")
-
-def _resize_and_pad(image: Image.Image, target_width: int, target_height: int) -> Image.Image:
-    """
-    Resizes an image to fit within the target dimensions while maintaining aspect ratio,
-    then pads the remaining space with black bars.
-    """
-    original_aspect = image.width / image.height
-    target_aspect = target_width / target_height
-    if original_aspect > target_aspect:
-        new_width = target_width; new_height = int(target_width / original_aspect)
-    else:
-        new_height = target_height; new_width = int(target_height * original_aspect)
-    if new_width <= 0 or new_height <= 0: new_width, new_height = 1, 1
-    resized_image = image.resize((new_width, new_height), Image.LANCZOS)
-    background = Image.new('RGB', (target_width, target_height), (0, 0, 0))
-    paste_x = (target_width - new_width) // 2
-    paste_y = (target_height - new_height) // 2
-    background.paste(resized_image, (paste_x, paste_y))
-    return background
-
-# #############################################################################
-# # --- UPDATED: Function signature now matches the new standard ---
-# #############################################################################
-def generate_video_from_image(
-    image_path: str,
-    output_video_path: str,
-    target_duration: float,
-    content_config: ContentConfig, # <-- Accepts the main config for consistency
-    i2v_config: I2VConfig,
-    visual_prompt: str, # <-- Kept for signature consistency, though SVD doesn't use it
-    motion_prompt: str = None
-) -> str:
-    pipe = load_pipeline(i2v_config)
-    print(f"I2V (SVD): Received request for chunk with target duration: {target_duration:.2f}s.")
-
-    input_image = load_image(image_path)
-    
-    # Determine optimal SVD size based on input image orientation
-    if input_image.width > input_image.height:
-        svd_target_width = 1024; svd_target_height = 576
-    else:
-        svd_target_width = 576; svd_target_height = 1024
+    def get_model_capabilities(self) -> Dict[str, Any]:
+        return {
+            "resolutions": {"Portrait": (576, 1024), "Landscape": (1024, 576)},
+            "max_chunk_duration": 3.0 
+        }
         
-    print(f"Preparing input image for SVD target size: {svd_target_width}x{svd_target_height}")
-    prepared_image = _resize_and_pad(input_image, svd_target_width, svd_target_height)
+    def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
+        # SVD doesn't use text prompts, but this shows how you could add model-specific keywords.
+        # For example, for a different model you might do:
+        # if prompt_type == "visual":
+        #    return f"{prompt}, 8k, photorealistic, cinematic lighting"
+        return prompt # Return original for SVD
 
-    frames_to_generate_by_model = i2v_config.model_native_frames
-    
-    # SVD's core logic: calculate the FPS needed to stretch 25 frames to the target duration
-    if target_duration > 0:
-        calculated_fps = max(1, round(frames_to_generate_by_model / target_duration))
-    else:
-        calculated_fps = 8 
+    def _load_pipeline(self):
+        if self.pipe is None:
+            print(f"Loading I2V pipeline (SVD): {self.config.model_id}...")
+            self.pipe = StableVideoDiffusionPipeline.from_pretrained(
+                self.config.model_id, torch_dtype=torch.float16
+            )
+            self.pipe.enable_model_cpu_offload()
+            print("I2V (SVD) pipeline loaded.")
 
-    print(f"  SVD will produce {frames_to_generate_by_model} frames.")
-    print(f"  Exporting at a calculated {calculated_fps} FPS to meet {target_duration:.2f}s target.")
-    if motion_prompt:
-        print(f"  Using motion prompt: {motion_prompt}")
+    def clear_vram(self):
+        print("Clearing I2V (SVD) VRAM...")
+        if self.pipe is not None: clear_vram_globally(self.pipe)
+        self.pipe = None
+        print("I2V (SVD) VRAM cleared.")
 
-    motion_bucket_id = i2v_config.motion_bucket_id
-    if motion_prompt:
-        motion_prompt_lower = motion_prompt.lower()
-        if any(word in motion_prompt_lower for word in ['fast', 'quick', 'rapid', 'dynamic']):
-            motion_bucket_id = min(255, motion_bucket_id + 50)
-        elif any(word in motion_prompt_lower for word in ['slow', 'gentle', 'subtle', 'smooth']):
-            motion_bucket_id = max(0, motion_bucket_id - 50)
-        print(f"  Adjusted motion_bucket_id to {motion_bucket_id}")
+    def _resize_and_pad(self, image: Image.Image, target_width: int, target_height: int) -> Image.Image:
+        original_aspect = image.width / image.height; target_aspect = target_width / target_height
+        if original_aspect > target_aspect: new_width, new_height = target_width, int(target_width / original_aspect)
+        else: new_height, new_width = target_height, int(target_height * original_aspect)
+        resized_image = image.resize((new_width, new_height), Image.LANCZOS)
+        background = Image.new('RGB', (target_width, target_height), (0, 0, 0))
+        background.paste(resized_image, ((target_width - new_width) // 2, (target_height - new_height) // 2))
+        return background
 
-    video_frames_list = pipe(
-        image=prepared_image,
-        height=svd_target_height,
-        width=svd_target_width,
-        decode_chunk_size=i2v_config.decode_chunk_size,
-        num_frames=frames_to_generate_by_model,
-        motion_bucket_id=motion_bucket_id,
-        fps=7,
-        noise_aug_strength=i2v_config.noise_aug_strength,
-    ).frames[0]
+    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str]) -> str:
+        self._load_pipeline()
 
-    export_to_video(video_frames_list, output_video_path, fps=calculated_fps)
-    
-    print(f"SVD video chunk ({len(video_frames_list)}f exported @ {calculated_fps}fps) saved to {output_video_path}")
-    return output_video_path
+        input_image = load_image(image_path)
+        svd_target_res = self.get_model_capabilities()["resolutions"]
+        aspect_ratio = "Landscape" if input_image.width > input_image.height else "Portrait"
+        svd_target_width, svd_target_height = svd_target_res[aspect_ratio]
+        prepared_image = self._resize_and_pad(input_image, svd_target_width, svd_target_height)
+
+        calculated_fps = max(1, round(self.config.model_native_frames / target_duration)) if target_duration > 0 else 8
+        motion_bucket_id = self.config.motion_bucket_id
+        if motion_prompt:
+            motion_prompt_lower = motion_prompt.lower()
+            if any(w in motion_prompt_lower for w in ['fast', 'quick', 'rapid', 'zoom in', 'pan right']): motion_bucket_id = min(255, motion_bucket_id + 50)
+            elif any(w in motion_prompt_lower for w in ['slow', 'gentle', 'subtle', 'still']): motion_bucket_id = max(0, motion_bucket_id - 50)
+            print(f"Adjusted motion_bucket_id to {motion_bucket_id} based on prompt: '{motion_prompt}'")
+
+        video_frames = self.pipe(
+            image=prepared_image, height=svd_target_height, width=svd_target_width,
+            decode_chunk_size=self.config.decode_chunk_size, num_frames=self.config.model_native_frames,
+            motion_bucket_id=motion_bucket_id, noise_aug_strength=self.config.noise_aug_strength,
+        ).frames[0]
+
+        export_to_video(video_frames, output_video_path, fps=calculated_fps)
+        print(f"SVD video chunk saved to {output_video_path}")
+        return output_video_path
 
 
 
 ==== i2v_modules/__init__.py ====
-from .i2v_svd import I2VConfig, generate_video_from_image, clear_i2v_vram
-
+from .i2v_ltx import LtxI2V
+from .i2v_svd import SvdI2V
 
 
 
 ==== t2v_modules/__init__.py ====
-from .t2v_zeroscope import T2VConfig
+from .t2v_zeroscope import ZeroscopeT2V
 
+
+
+==== t2v_modules/t2v_ltx.py ====
+# In t2v_modules/t2v_ltx.py
+import torch
+from typing import Dict, Any
+
+# --- Import the necessary pipelines and configs for quantization ---
+from diffusers import LTXPipeline, LTXVideoTransformer3DModel
+from diffusers.utils import export_to_video
+# We need both transformers' and diffusers' BitsAndBytesConfig for this specific model
+from transformers import T5EncoderModel, BitsAndBytesConfig as TransformersBitsAndBytesConfig
+from diffusers import BitsAndBytesConfig as DiffusersBitsAndBytesConfig
+
+
+from base_modules import BaseT2V, BaseModuleConfig
+from config_manager import DEVICE, clear_vram_globally
+
+class LtxT2VConfig(BaseModuleConfig):
+    """
+    Configuration for the Lightricks LTX Text-to-Video model.
+    Includes a flag to enable memory-saving 8-bit quantization.
+    """
+    model_id: str = "Lightricks/LTX-Video" 
+    use_8bit_quantization: bool = True
+    num_inference_steps: int = 50
+    guidance_scale: float = 7.5
+    decode_timestep: float = 0.03
+    decode_noise_scale: float = 0.025
+
+class LtxT2V(BaseT2V):
+    """
+    Implements Text-to-Video generation using the LTXPipeline,
+    with support for 8-bit quantization to save VRAM.
+    """
+    Config = LtxT2VConfig
+    
+    def get_model_capabilities(self) -> Dict[str, Any]:
+        """Returns the optimal final output resolutions."""
+        return {
+            "resolutions": {
+                "Portrait": (512, 768), 
+                "Landscape": (768, 512)
+            },
+            "max_chunk_duration": 5.0
+        }
+
+    def _load_pipeline(self):
+        """
+        Loads the LTX pipeline. If quantization is enabled, it loads the
+        heavy components in 8-bit to save significant VRAM.
+        """
+        if self.pipe is not None:
+            return
+
+        if self.config.use_8bit_quantization:
+            print(f"Loading T2V pipeline ({self.config.model_id}) with 8-bit quantization...")
+
+            # 1. Define the quantization config for the T5 text_encoder (from transformers)
+            text_encoder_quant_config = TransformersBitsAndBytesConfig(load_in_8bit=True)
+
+            # 2. Load the heavy text encoder with its quantization config
+            text_encoder_8bit = T5EncoderModel.from_pretrained(
+                self.config.model_id,
+                subfolder="text_encoder",
+                quantization_config=text_encoder_quant_config,
+                torch_dtype=torch.float16, # It's good practice to set dtype even when quantizing
+            )
+
+            # 3. Define the quantization config for the Transformer (from diffusers)
+            transformer_quant_config = DiffusersBitsAndBytesConfig(load_in_8bit=True)
+
+            # 4. Load the even heavier video transformer with its quantization config
+            transformer_8bit = LTXVideoTransformer3DModel.from_pretrained(
+                self.config.model_id,
+                subfolder="transformer",
+                quantization_config=transformer_quant_config,
+                torch_dtype=torch.float16,
+            )
+
+            # 5. Assemble the final pipeline from the quantized components.
+            #    As per the traceback and docs, this pipeline requires 'balanced' for device_map
+            #    when loading components manually.
+            self.pipe = LTXPipeline.from_pretrained(
+                self.config.model_id,
+                text_encoder=text_encoder_8bit,
+                transformer=transformer_8bit,
+                torch_dtype=torch.float16,
+                device_map="balanced", # <-- THE FIX: Use 'balanced' instead of 'auto'
+            )
+            print("Quantized T2V pipeline loaded successfully with 'balanced' device map.")
+
+        else:
+            # Original, non-quantized loading path
+            print(f"Loading T2V pipeline ({self.config.model_id}) in full precision...")
+            self.pipe = LTXPipeline.from_pretrained(
+                self.config.model_id, 
+                torch_dtype=torch.bfloat16 # Use bfloat16 for full precision as recommended
+            )
+            # enable_model_cpu_offload is an alternative for non-quantized loading
+            self.pipe.enable_model_cpu_offload()
+
+        # VAE tiling is beneficial in both cases for memory efficiency during decoding
+        self.pipe.vae.enable_tiling()
+        print("VAE tiling enabled for memory efficiency.")
+
+    def clear_vram(self):
+        """Clears the VRAM used by the LTX pipeline."""
+        print(f"Clearing T2V (LTX) VRAM...")
+        if self.pipe is not None: 
+            # When using device_map, accelerate handles the model parts.
+            # Setting to None and calling gc is the main way to clear.
+            clear_vram_globally(self.pipe, self.pipe.text_encoder, self.pipe.transformer)
+        self.pipe = None
+        print("T2V (LTX) VRAM cleared.")
+
+    def generate_video_from_text(
+        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int
+    ) -> str:
+        """Generates a video directly from a text prompt using the loaded LTXPipeline."""
+        self._load_pipeline()
+        
+        negative_prompt = "worst quality, inconsistent motion, blurry, jittery, distorted, text, watermark, bad anatomy"
+        
+        print(f"Generating LTX T2V ({width}x{height}) for prompt: \"{prompt[:50]}...\"")
+        
+        # The LTX pipeline call is correct and doesn't need changes
+        video_frames = self.pipe(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            num_frames=num_frames,
+            num_inference_steps=self.config.num_inference_steps,
+            guidance_scale=self.config.guidance_scale,
+            decode_timestep=self.config.decode_timestep,
+            decode_noise_scale=self.config.decode_noise_scale
+        ).frames[0]
+        
+        export_to_video(video_frames, output_video_path, fps=fps)
+        
+        print(f"LTX T2V video chunk saved to {output_video_path}")
+        return output_video_path
 
 
 
 ==== t2v_modules/t2v_zeroscope.py ====
 # In t2v_modules/t2v_zeroscope.py
-
-import os
 import torch
-from dataclasses import dataclass
+from typing import Dict, Any
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.utils import export_to_video
+
+from base_modules import BaseT2V, BaseModuleConfig
 from config_manager import DEVICE, clear_vram_globally
-# We don't need numpy imported here anymore since the output is already a numpy array
-# import numpy as np 
 
-@dataclass
-class T2VConfig:
+class ZeroscopeT2VConfig(BaseModuleConfig):
     model_id: str = "cerspense/zeroscope_v2_576w"
-    num_inference_steps: int = 40
-    num_frames: int = 24
-
-T2V_PIPE = None
-
-def get_model_capabilities() -> dict:
-    """Returns the optimal settings for the Zeroscope model."""
-    return {
-        "resolutions": {
-            # This model works best at a fixed landscape size
-            "Portrait": (576, 320),
-            "Landscape": (576, 320),
-        },
-        # Zeroscope works best with shorter clips
-        "max_chunk_duration": 2.0 
-    }
-
-
-def load_pipeline(config: T2VConfig):
-    global T2V_PIPE
-    if T2V_PIPE is None:
-        print(f"Loading T2V pipeline ({config.model_id})...")
-        T2V_PIPE = DiffusionPipeline.from_pretrained(config.model_id, torch_dtype=torch.float16)
-        T2V_PIPE.scheduler = DPMSolverMultistepScheduler.from_config(T2V_PIPE.scheduler.config)
-        T2V_PIPE.enable_model_cpu_offload()
-        print(f"T2V ({config.model_id}) pipeline loaded and configured with DPMSolver.")
-    return T2V_PIPE
-
-def clear_t2v_vram():
-    global T2V_PIPE
-    print(f"Clearing T2V VRAM...")
-    if T2V_PIPE is not None: clear_vram_globally(T2V_PIPE)
-    T2V_PIPE = None
-    print("T2V VRAM cleared.")
-
-def generate_video_from_text(
-    prompt: str,
-    output_video_path: str,
-    num_frames: int,
-    fps: int,
-    width: int,
-    height: int,
-    t2v_config: T2VConfig
-) -> str:
-    pipe = load_pipeline(t2v_config)
-    print(f"Generating T2V ({width}x{height}) for prompt: \"{prompt[:50]}...\" ({num_frames} frames)")
+    upscaler_model_id: str = "cerspense/zeroscope_v2_xl"
     
-    # This returns a NumPy array of shape (1, F, H, W, C)
-    video_frames_batch = pipe(
-        prompt=prompt,
-        num_inference_steps=t2v_config.num_inference_steps,
-        height=height,
-        width=width,
-        num_frames=num_frames,
-        output_type="np"  # Explicitly request NumPy output
-    ).frames
+    num_inference_steps: int = 30
+    guidance_scale: float = 9.0
+    # NEW: Add strength for the upscaling process, as recommended in the docs
+    upscaler_strength: float = 0.7 
+
+class ZeroscopeT2V(BaseT2V):
+    Config = ZeroscopeT2VConfig
     
-    # #############################################################################
-    # # --- THE DEFINITIVE FIX IS HERE ---
-    # # We select the first (and only) video from the batch dimension.
-    # # This gives us an object of shape (F, H, W, C), which can be iterated
-    # # into a list of frames that export_to_video expects.
-    # #############################################################################
-    video_frames = video_frames_batch[0]
-    
-    export_to_video(video_frames, output_video_path, fps=fps)
-    # #############################################################################
-    
-    print(f"T2V video chunk saved to {output_video_path}")
-    return output_video_path
+    def __init__(self, config: ZeroscopeT2VConfig):
+        super().__init__(config)
+        self.upscaler_pipe = None
+
+    def get_model_capabilities(self) -> Dict[str, Any]:
+        fixed_resolution = (576, 320)
+        return {
+            "resolutions": {"Portrait": fixed_resolution, "Landscape": fixed_resolution},
+            "max_chunk_duration": 2.0 
+        }
+
+    def _load_pipeline(self):
+        if self.pipe is None:
+            print(f"Loading T2V pipeline ({self.config.model_id})...")
+            self.pipe = DiffusionPipeline.from_pretrained(self.config.model_id, torch_dtype=torch.float16)
+            self.pipe.scheduler = DPMSolverMultistepScheduler.from_config(self.pipe.scheduler.config)
+            self.pipe.enable_model_cpu_offload()
+            print(f"T2V ({self.config.model_id}) pipeline loaded.")
+            
+        if self.upscaler_pipe is None:
+            print(f"Loading T2V Upscaler pipeline ({self.config.upscaler_model_id})...")
+            self.upscaler_pipe = DiffusionPipeline.from_pretrained(self.config.upscaler_model_id, torch_dtype=torch.float16)
+            self.upscaler_pipe.scheduler = DPMSolverMultistepScheduler.from_config(self.upscaler_pipe.scheduler.config)
+            self.upscaler_pipe.enable_model_cpu_offload()
+            print(f"T2V Upscaler ({self.config.upscaler_model_id}) pipeline loaded.")
+
+    def clear_vram(self):
+        print(f"Clearing T2V VRAM...")
+        models_to_clear = [m for m in [self.pipe, self.upscaler_pipe] if m is not None]
+        if models_to_clear: clear_vram_globally(*models_to_clear)
+        self.pipe, self.upscaler_pipe = None, None
+        print("T2V VRAM cleared.")
+
+    def generate_video_from_text(
+        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int
+    ) -> str:
+        self._load_pipeline()
+        
+        negative_prompt = "blurry, low quality, watermark, bad anatomy, text, letters, distorted"
+        
+        print(f"Stage 1: Generating T2V ({width}x{height}) for prompt: \"{prompt[:70]}...\"")
+        
+        video_frames_tensor = self.pipe(
+            prompt=prompt, negative_prompt=negative_prompt,
+            num_inference_steps=self.config.num_inference_steps,
+            height=height, width=width, num_frames=num_frames,
+            guidance_scale=self.config.guidance_scale, output_type="pt"
+        ).frames[0]
+        
+        print("Stage 2: Upscaling video to HD...")
+        
+        # FIX: The argument is 'video', not 'image'.
+        upscaled_video_frames = self.upscaler_pipe(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            video=video_frames_tensor, # <--- THIS IS THE FIX
+            strength=self.config.upscaler_strength, # <--- ADDED STRENGTH
+            num_inference_steps=self.config.num_inference_steps,
+            guidance_scale=self.config.guidance_scale,
+        ).frames[0]
+
+        export_to_video(upscaled_video_frames, output_video_path, fps=fps)
+        
+        print(f"High-quality T2V video chunk saved to {output_video_path}")
+        return output_video_path
 
 
 

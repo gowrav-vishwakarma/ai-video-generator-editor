@@ -1,6 +1,6 @@
 # In t2v_modules/t2v_ltx.py
 import torch
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Union
 
 # --- Import the necessary pipelines and configs for quantization ---
 from diffusers import LTXPipeline, LTXVideoTransformer3DModel
@@ -126,11 +126,14 @@ class LtxT2V(BaseT2V):
         print("T2V (LTX) VRAM cleared.")
 
     def generate_video_from_text(
-        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int
+        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None
     ) -> str:
         """Generates a video directly from a text prompt using the loaded LTXPipeline."""
         self._load_pipeline()
-        
+
+        if ip_adapter_image:
+            print("Warning: LtxT2V module received IP-Adapter image but does not currently implement its use.")
+
         negative_prompt = "worst quality, inconsistent motion, blurry, jittery, distorted, text, watermark, bad anatomy"
         
         print(f"Generating LTX T2V ({width}x{height}) for prompt: \"{prompt[:50]}...\"")

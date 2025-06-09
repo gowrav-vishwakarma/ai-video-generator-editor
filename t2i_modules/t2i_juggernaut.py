@@ -42,10 +42,10 @@ class JuggernautT2I(BaseT2I):
 
     def _load_pipeline(self):
         if self.pipe is None:
-            print(f"Loading T2I pipeline (Juggernaut): {self.config.model_id}...")
+            print(f"Loading T2I pipeline (Juggernaut): {self.config.model_id}... to {DEVICE}")
             self.pipe = StableDiffusionXLPipeline.from_pretrained(
-                self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
-            ).to(DEVICE)
+                self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True, device_map="balanced"
+            )
             print("Juggernaut Base pipeline loaded.")
             if self.config.refiner_id:
                 # This part is simplified as Juggernaut doesn't typically use a refiner

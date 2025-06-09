@@ -1,6 +1,6 @@
 # i2v_modules/i2v_svd.py
 import torch
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Union
 from diffusers import StableVideoDiffusionPipeline
 from diffusers.utils import load_image, export_to_video
 from PIL import Image
@@ -69,8 +69,11 @@ class SvdI2V(BaseI2V):
         background.paste(resized_image, ((target_width - new_width) // 2, (target_height - new_height) // 2))
         return background
 
-    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str]) -> str:
+    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str], ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         self._load_pipeline()
+
+        if ip_adapter_image:
+            print("Warning: SvdI2V module received IP-Adapter image but does not currently implement its use.")
 
         input_image = load_image(image_path)
         svd_target_res = self.get_model_capabilities()["resolutions"]

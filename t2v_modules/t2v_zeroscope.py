@@ -1,6 +1,6 @@
 # In t2v_modules/t2v_zeroscope.py
 import torch
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Union
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.utils import export_to_video
 
@@ -67,10 +67,13 @@ class ZeroscopeT2V(BaseT2V):
         print("T2V VRAM cleared.")
 
     def generate_video_from_text(
-        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int
+        self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None
     ) -> str:
         self._load_pipeline()
         
+        if ip_adapter_image:
+            print("Warning: ZeroscopeT2V module received IP-Adapter image but does not currently implement its use.")
+
         negative_prompt = "blurry, low quality, watermark, bad anatomy, text, letters, distorted"
         
         print(f"Stage 1: Generating T2V ({width}x{height}) for prompt: \"{prompt[:70]}...\"")

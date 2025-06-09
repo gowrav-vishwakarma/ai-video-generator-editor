@@ -103,10 +103,13 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
             char_dir = os.path.join(output_dir, "characters", safe_name)
             os.makedirs(char_dir, exist_ok=True)
             ref_image_path = os.path.join(char_dir, "reference.png")
-            # We save the original, un-rotated image file
-            with open(ref_image_path, "wb") as f:
-                f.write(char_info['image'].getbuffer())
-            pm.add_character({"name": char_info['name'], "reference_image_path": ref_image_path})
+            corrected_image = load_and_correct_image_orientation(char_info['image'])
+            if corrected_image:
+                # Save the corrected image, not the raw buffer
+                corrected_image.save(ref_image_path, "PNG") 
+                pm.add_character({"name": char_info['name'], "reference_image_path": ref_image_path})
+            else:
+                st.error(f"Could not process image for character {char_info['name']}. Skipping.")
     
     st.session_state.current_project = pm
     st.session_state.ui_executor = UITaskExecutor(pm)

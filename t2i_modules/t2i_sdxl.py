@@ -1,6 +1,6 @@
 # t2i_modules/t2i_sdxl.py
 import torch
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
 
 from base_modules import BaseT2I, BaseModuleConfig, ModuleCapabilities
@@ -64,8 +64,11 @@ class SdxlT2I(BaseT2I):
         self.pipe, self.refiner_pipe = None, None
         print("T2I (SDXL) VRAM cleared.")
 
-    def generate_image(self, prompt: str, output_path: str, width: int, height: int) -> str:
+    def generate_image(self, prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         self._load_pipeline()
+
+        if ip_adapter_image:
+            print("Warning: SDXLT2I module received IP-Adapter image but does not currently implement its use.")
         
         kwargs = {
             "prompt": prompt, "width": width, "height": height,

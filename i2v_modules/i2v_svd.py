@@ -35,7 +35,7 @@ class SvdI2V(BaseI2V):
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (576, 1024), "Landscape": (1024, 576)},
-            "max_chunk_duration": 3.0 
+            "max_chunk_duration": 2.0 
         }
         
     def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:

@@ -12,7 +12,6 @@ from config_manager import DEVICE, clear_vram_globally
 
 class CoquiTTSConfig(BaseModuleConfig):
     model_id: str = "tts_models/multilingual/multi-dataset/xtts_v2"
-    speaker_language: str = "en"
 
 class CoquiTTSModule(BaseTTS):
     Config = CoquiTTSConfig
@@ -22,7 +21,7 @@ class CoquiTTSModule(BaseTTS):
         return ModuleCapabilities(
             vram_gb_min=2.0, # XTTS is relatively lightweight
             ram_gb_min=8.0,
-            supported_tts_languages=["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh-cn", "ja", "hu", "ko"]
+            supported_tts_languages=["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh-cn", "ja", "hu", "ko", "hi"]
         )
 
     def _load_model(self):
@@ -39,14 +38,14 @@ class CoquiTTSModule(BaseTTS):
         print("TTS VRAM cleared.")
 
     def generate_audio(
-        self, text: str, output_dir: str, scene_idx: int, speaker_wav: Optional[str] = None
+        self, text: str, output_dir: str, scene_idx: int, language: str, speaker_wav: Optional[str] = None
     ) -> Tuple[str, float]:
         self._load_model()
         
-        print(f"Generating audio for scene {scene_idx}: \"{text[:50]}...\"")
+        print(f"Generating audio in {language} for scene {scene_idx}: \"{text[:50]}...\"")
         output_path = os.path.join(output_dir, f"scene_{scene_idx}_audio.wav")
         
-        tts_kwargs = {"language": self.config.speaker_language, "file_path": output_path}
+        tts_kwargs = {"language": language, "file_path": output_path}
         
         if "xtts" in self.config.model_id.lower():
             if speaker_wav and os.path.exists(speaker_wav):

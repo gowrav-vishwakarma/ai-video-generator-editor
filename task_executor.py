@@ -95,7 +95,7 @@ class TaskExecutor:
         return True
 
     def _execute_generate_audio(self, scene_idx: int, text: str, speaker_wav: Optional[str] = None) -> bool:
-        path, duration = self.tts_module.generate_audio(text, self.content_cfg.output_dir, scene_idx, speaker_wav)
+        path, duration = self.tts_module.generate_audio(text, self.content_cfg.output_dir, scene_idx, language=self.content_cfg.language, speaker_wav=speaker_wav)
         self.project_manager.update_narration_part_status(scene_idx, "generated", path, duration if duration > 0.1 else 0.0)
         return True
 

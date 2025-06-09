@@ -82,7 +82,7 @@ def load_project(project_name):
         st.error("Failed to load project.")
 
 
-def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_selections):
+def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_selections, language):
     name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{name}_{int(time.time())}"
     
@@ -93,7 +93,8 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
         min_scenes=min_s, 
         max_scenes=max_s, 
         use_svd_flow=use_svd,
-        module_selections=module_selections
+        module_selections=module_selections,
+        language=language
     )
     pm = ProjectManager(output_dir)
     pm.initialize_project(topic, cfg)
@@ -166,24 +167,54 @@ def render_project_selection():
     with c1:
         st.subheader("Create New Project")
         
-        # --- FIX: Moved radio button outside the form to allow on_change to work without form submission ---
         st.info("Step 1: Choose your workflow and AI models.")
         st.radio(
             "Generation Flow",
             ("Image to Video (High Quality)", "Text to Video (Fast)"),
             horizontal=True,
             key="flow_choice",
-            on_change=handle_flow_change  # This triggers a rerun on change
+            on_change=handle_flow_change
         )
         use_svd = st.session_state.flow_choice == "Image to Video (High Quality)"
+
+        # --- FIX: MOVE THE DYNAMIC WIDGETS OUTSIDE THE FORM ---
+        # The TTS selection needs to be outside the form so its on_change can work.
+        tts_options = st.session_state.discovered_modules.get('tts', [])
+        tts_paths = [m['path'] for m in tts_options]
+        
+        # We use st.session_state to store the selection.
+        st.selectbox(
+            "Text-to-Speech Model", 
+            options=tts_paths, 
+            format_func=lambda x: x.split('.')[-1],
+            key="selected_tts_module", # The key ensures the selection persists across reruns
+            on_change=lambda: st.session_state.update() 
+        )
+
+        # Get the capabilities of the selected TTS model from session_state
+        selected_tts_caps = get_caps_from_path('tts', st.session_state.get('selected_tts_module'))
+        
+        # The language dropdown also depends on the TTS model, so it stays outside the form too.
+        language = "en" # Default value
+        if selected_tts_caps and selected_tts_caps.supported_tts_languages:
+            supported_langs = selected_tts_caps.supported_tts_languages
+            # We use a key here as well to persist the choice.
+            language = st.selectbox("Narration Language", options=supported_langs, index=0, key="selected_language")
+        elif selected_tts_caps:
+            st.caption("Language selection not available for this model.")
+        # --------------------------------------------------------
 
         with st.form("new_project_form"):
             has_characters = len(st.session_state.new_project_characters) > 0
             module_selections = {}
+
+            # Now, inside the form, we just record the selections made outside.
+            module_selections['tts'] = st.session_state.get('selected_tts_module')
             
             # Universal modules
             module_selections['llm'] = st.selectbox("Language Model (LLM)", options=[m['path'] for m in st.session_state.discovered_modules.get('llm', [])], format_func=lambda x: x.split('.')[-1])
-            module_selections['tts'] = st.selectbox("Text-to-Speech Model", options=[m['path'] for m in st.session_state.discovered_modules.get('tts', [])], format_func=lambda x: x.split('.')[-1])
+            
+            # (The original TTS selectbox is removed from here)
 
             # Workflow-specific selections
             show_char_section = False
@@ -242,13 +273,16 @@ def render_project_selection():
 
             submitted = st.form_submit_button("Create & Start Project", type="primary")
             if submitted:
+                # We now retrieve the language from the session state, where it was stored by the widget outside the form.
+                final_language = st.session_state.get('selected_language', 'en') 
+
                 if not all(module_selections.values()):
                     st.error("A required module is missing or could not be selected. Please check your selections.")
                 elif not topic: 
                     st.error("Topic required.")
                 else:
                     final_chars = st.session_state.new_project_characters if show_char_section else []
-                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections)
+                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections, final_language) # Pass the language here
         
         st.divider()
         st.subheader("Add Characters (Optional)")

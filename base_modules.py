@@ -78,7 +78,7 @@ class BaseTTS(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def generate_audio(self, text: str, output_dir: str, scene_idx: int, speaker_wav: Optional[str] = None) -> Tuple[str, float]:
+    def generate_audio(self, text: str, output_dir: str, scene_idx: int, language: str, speaker_wav: Optional[str] = None) -> Tuple[str, float]:
         """Generates audio from text."""
         pass
 

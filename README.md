@@ -1,5 +1,5 @@
 # setup cmd: 
-uv add torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy "huggingface-hub[cli]" hf-transfer accelerate pydantic --no-build-package llvmlite llvmlite
+uv add torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy "huggingface-hub[cli]" hf-transfer accelerate bitsandbytes pydantic --no-build-package llvmlite llvmlite
 
 # Influencer - AI Instagram Content Generator
 

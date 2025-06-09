@@ -8,7 +8,9 @@ import torch
 import time
 from importlib import import_module
 from typing import List
-from PIL import Image, ImageOps # <-- ADD THIS IMPORT
+from PIL import Image, ImageOps
+
+from utils import load_and_correct_image_orientation # <-- ADD THIS IMPORT
 
 # Fix for torch.classes issue if needed, though often it's better to manage environments.
 torch.classes.__path__ = []
@@ -35,17 +37,6 @@ def init_session_state():
         if key not in st.session_state: st.session_state[key] = value
 init_session_state()
 
-# --- NEW: Helper function to fix image orientation ---
-def load_and_correct_image_orientation(image_source):
-    """Loads an image and corrects its orientation based on EXIF data."""
-    try:
-        image = Image.open(image_source)
-        # The magic is in exif_transpose
-        corrected_image = ImageOps.exif_transpose(image)
-        return corrected_image
-    except Exception as e:
-        st.error(f"Could not load or correct image: {e}")
-        return None
 
 # Helper Functions
 def list_projects():

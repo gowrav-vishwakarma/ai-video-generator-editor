@@ -1,4 +1,3 @@
-add all characters in all scene as default
 audio tts emotion parameters (not in narration)
 tts language selection
 on dashboard keep expander of characters closed and show characters name on expander title
@@ -13,3 +12,4 @@ prompt finetunder button touse llm with different prompt (or a separate module ?
 are we saving reference sound in project somewhere and its path .. and showing back in dashboard page?
 is the logic separate from UI so we can change ui part any time without chainging logic?
 ✓ scene delete add facility 
+✓ add all characters in all scene as default

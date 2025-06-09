@@ -413,10 +413,10 @@ def render_processing_dashboard():
             if part.audio_path and os.path.exists(part.audio_path):
                 st.audio(part.audio_path)
                 if st.button("Regen Audio", key=f"regen_audio_{i}", disabled=st.session_state.is_processing):
-                    with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio)
+                    with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio); st.rerun()
             else:
                 if st.button("Gen Audio", key=f"gen_audio_{i}", disabled=st.session_state.is_processing):
-                    with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio)
+                    with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio); st.rerun()
             
             st.divider(); st.subheader("Visual Chunks")
             scene = project.get_scene_info(i)
@@ -438,14 +438,14 @@ def render_processing_dashboard():
                                 else: st.info("Image pending...")
                                 btn_txt = "Regen Image" if has_image else "Gen Image"
                                 if st.button(btn_txt, key=f"gen_img_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
-                                    with st.spinner("..."): ui_executor.regenerate_chunk_image(i, chunk_idx)
+                                    with st.spinner("..."): ui_executor.regenerate_chunk_image(i, chunk_idx); st.rerun()
                             with v_col:
                                 st.write("**Video**"); has_video = chunk.video_path and os.path.exists(chunk.video_path)
                                 if has_video: st.video(chunk.video_path)
                                 else: st.info("Video pending...")
                                 btn_txt = "Regen Video" if has_video else "Gen Video"
                                 if st.button(btn_txt, key=f"gen_vid_{i}_{chunk_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
-                                    with st.spinner("..."): ui_executor.regenerate_chunk_video(i, chunk_idx)
+                                    with st.spinner("..."): ui_executor.regenerate_chunk_video(i, chunk_idx); st.rerun()
                         else: # T2V Flow
                             p_col, v_col = st.columns([2, 1])
                             with p_col:
@@ -458,10 +458,10 @@ def render_processing_dashboard():
                                 else: st.info("Video pending...")
                                 btn_txt = "Regen Video" if has_video else "Gen Video"
                                 if st.button(btn_txt, key=f"gen_t2v_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
-                                    with st.spinner("..."): ui_executor.regenerate_chunk_t2v(i, chunk_idx)
+                                    with st.spinner("..."): ui_executor.regenerate_chunk_t2v(i, chunk_idx); st.rerun()
             elif part.status == "generated":
                  if st.button("Create Scene", key=f"create_scene_{i}", disabled=st.session_state.is_processing):
-                    with st.spinner("..."): ui_executor.create_scene(i)
+                    with st.spinner("..."): ui_executor.create_scene(i); st.rerun()
             else: st.info("Generate audio before scene creation.")
         
         # "Add Scene After This One" button

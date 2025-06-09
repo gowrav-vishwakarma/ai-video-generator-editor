@@ -19,7 +19,7 @@ class LtxI2V(BaseI2V):
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (480, 704), "Landscape": (704, 480)},
-            "max_chunk_duration": 2.5 
+            "max_chunk_duration": 5 
         }
     
     def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:

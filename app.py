@@ -92,15 +92,15 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
 # UI Rendering
 def render_project_selection():
     st.title("🎥 AI Video Generation Pipeline")
-    c1, c2 = st.columns([2, 1])
-    with c1:
+    c1, c2 = st.columns([1, 2])
+    with c2:
         st.subheader("Existing Projects")
         for p in list_projects():
             with st.container(border=True):
                 pc1, pc2, pc3 = st.columns([4, 2, 1])
                 pc1.write(f"**{p['topic']}**"); pc2.write(f"_{p['created_at'].strftime('%Y-%m-%d %H:%M')}_")
                 pc3.button("Load", key=f"load_{p['name']}", on_click=load_project, args=(p['name'],), use_container_width=True)
-    with c2:
+    with c1:
         with st.form("new_project_form"):
             st.subheader("Create New Project")
             topic = st.text_area("Video Topic")

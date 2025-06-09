@@ -57,8 +57,8 @@ class ModuleSelectorConfig(BaseModel):
     tts_module: str = "tts_modules.tts_coqui.CoquiTTSModule"
     t2i_module: str = "t2i_modules.t2i_juggernaut.JuggernautT2I"
     i2v_module: str = "i2v_modules.i2v_ltx.LtxI2V"
-    t2v_module: str = "t2v_modules.t2v_zeroscope.ZeroscopeT2V"
-    # t2v_module: str = "t2v_modules.t2v_ltx.LtxT2V"
+    # t2v_module: str = "t2v_modules.t2v_zeroscope.ZeroscopeT2V"
+    t2v_module: str = "t2v_modules.t2v_ltx.LtxT2V"
 
 def clear_vram_globally(*items_to_del):
     print(f"Attempting to clear VRAM. Received {len(items_to_del)} items to delete.")

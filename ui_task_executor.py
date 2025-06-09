@@ -2,7 +2,7 @@ import streamlit as st
 from task_executor import TaskExecutor
 from config_manager import ContentConfig
 import logging
-from typing import Optional
+from typing import List, Optional
 import os
 
 logger = logging.getLogger(__name__)
@@ -97,3 +97,39 @@ class UITaskExecutor:
         else: st.error("Failed to assemble final video.")
         self.project_manager.load_project()
         return success
+
+    def add_character(self, name: str, image_file: "UploadedFile"):
+        if not self.project_manager.state: return False
+        safe_name = name.replace(" ", "_")
+        char_dir = os.path.join(self.project_manager.output_dir, "characters", safe_name)
+        os.makedirs(char_dir, exist_ok=True)
+        ref_image_path = os.path.join(char_dir, "reference.png")
+        with open(ref_image_path, "wb") as f:
+            f.write(image_file.getbuffer())
+        char_data = {"name": name, "reference_image_path": ref_image_path}
+        self.project_manager.add_character(char_data)
+        st.toast(f"Character '{name}' added!", icon="👤")
+        return True
+
+    def update_character(self, old_name: str, new_name: str, new_image_file: Optional["UploadedFile"]):
+        ref_image_path = None
+        if new_image_file:
+            safe_name = (new_name or old_name).replace(" ", "_")
+            char_dir = os.path.join(self.project_manager.output_dir, "characters", safe_name)
+            os.makedirs(char_dir, exist_ok=True)
+            ref_image_path = os.path.join(char_dir, "reference.png")
+            with open(ref_image_path, "wb") as f:
+                f.write(new_image_file.getbuffer())
+
+        self.project_manager.update_character(old_name, new_name, ref_image_path)
+        st.toast(f"Character '{old_name}' updated!", icon="✏️")
+        return True
+
+    def delete_character(self, name: str):
+        self.project_manager.delete_character(name)
+        st.toast(f"Character '{name}' deleted!", icon="🗑️")
+        return True
+    
+    def update_scene_characters(self, scene_idx: int, character_names: List[str]):
+        self.project_manager.update_scene_characters(scene_idx, character_names)
+        st.toast(f"Characters for Scene {scene_idx+1} updated.", icon="🎬")

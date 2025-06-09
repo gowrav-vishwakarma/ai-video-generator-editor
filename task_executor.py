@@ -1,4 +1,4 @@
-# task_executor.py
+# In task_executor.py
 import logging
 import math
 import os
@@ -9,7 +9,7 @@ from importlib import import_module
 from project_manager import ProjectManager, STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED, STATUS_FAILED
 from config_manager import ContentConfig, ModuleSelectorConfig
 from video_assembly import assemble_final_reel, assemble_scene_video_from_sub_clips
-from base_modules import BaseModuleConfig
+from base_modules import BaseModuleConfig # This might not be used directly here but good to keep
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +106,26 @@ class TaskExecutor:
         w, h = self.content_cfg.generation_resolution
         path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_keyframe.png")
         
-        # NEW: Enhance prompt before generation
         enhanced_prompt = self.t2i_module.enhance_prompt(visual_prompt)
         
-        self.t2i_module.generate_image(enhanced_prompt, path, w, h)
+        # --- Get character images for IP-Adapter ---
+        scene = self.project_manager.get_scene_info(scene_idx)
+        ip_adapter_image_paths = []
+        if scene and scene.character_names:
+            print(f"Found characters for Scene {scene_idx}: {scene.character_names}")
+            for name in scene.character_names:
+                char = self.project_manager.get_character(name)
+                if char and os.path.exists(char.reference_image_path):
+                    ip_adapter_image_paths.append(char.reference_image_path)
+        
+        # --- Pass paths to the module ---
+        self.t2i_module.generate_image(
+            enhanced_prompt, 
+            path, 
+            w, h, 
+            ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
+        )
+        
         self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_IMAGE_GENERATED, keyframe_path=path)
         self.t2i_module.clear_vram()
         return True
@@ -118,16 +134,32 @@ class TaskExecutor:
         chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
         if not chunk.keyframe_image_path or not os.path.exists(chunk.keyframe_image_path): return False
         
-        # NEW: Enhance prompts before generation
         enhanced_visual = self.i2v_module.enhance_prompt(visual_prompt, "visual")
         enhanced_motion = self.i2v_module.enhance_prompt(motion_prompt, "motion")
 
+        # --- NEW: Get character images for IP-Adapter ---
+        scene = self.project_manager.get_scene_info(scene_idx)
+        ip_adapter_image_paths = []
+        if scene and scene.character_names:
+            print(f"Found characters for Scene {scene_idx}: {scene.character_names}")
+            for name in scene.character_names:
+                char = self.project_manager.get_character(name)
+                if char and os.path.exists(char.reference_image_path):
+                    ip_adapter_image_paths.append(char.reference_image_path)
+
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4")
+        
+        # --- NEW: Pass paths to the module ---
         sub_clip_path = self.i2v_module.generate_video_from_image(
-            image_path=chunk.keyframe_image_path, output_video_path=video_path, 
-            target_duration=chunk.target_duration, content_config=self.content_cfg,
-            visual_prompt=enhanced_visual, motion_prompt=enhanced_motion
+            image_path=chunk.keyframe_image_path, 
+            output_video_path=video_path, 
+            target_duration=chunk.target_duration, 
+            content_config=self.content_cfg,
+            visual_prompt=enhanced_visual, 
+            motion_prompt=enhanced_motion,
+            ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
         )
+
         if sub_clip_path and os.path.exists(sub_clip_path):
             self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
             return True
@@ -138,11 +170,30 @@ class TaskExecutor:
         num_frames = int(chunk.target_duration * self.content_cfg.fps)
         w, h = self.content_cfg.generation_resolution
         
-        # NEW: Enhance prompt before generation
         enhanced_prompt = self.t2v_module.enhance_prompt(visual_prompt)
         
+        # --- NEW: Get character images for IP-Adapter ---
+        scene = self.project_manager.get_scene_info(scene_idx)
+        ip_adapter_image_paths = []
+        if scene and scene.character_names:
+            print(f"Found characters for Scene {scene_idx}: {scene.character_names}")
+            for name in scene.character_names:
+                char = self.project_manager.get_character(name)
+                if char and os.path.exists(char.reference_image_path):
+                    ip_adapter_image_paths.append(char.reference_image_path)
+        
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_t2v.mp4")
-        sub_clip_path = self.t2v_module.generate_video_from_text(enhanced_prompt, video_path, num_frames, self.content_cfg.fps, w, h)
+        
+        # --- NEW: Pass paths to the module ---
+        sub_clip_path = self.t2v_module.generate_video_from_text(
+            enhanced_prompt, 
+            video_path, 
+            num_frames, 
+            self.content_cfg.fps, 
+            w, h,
+            ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
+        )
+
         if sub_clip_path and os.path.exists(sub_clip_path):
             self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_VIDEO_GENERATED, video_path=sub_clip_path)
             return True

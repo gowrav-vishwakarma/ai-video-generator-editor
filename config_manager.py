@@ -63,7 +63,7 @@ class ModuleSelectorConfig(BaseModel):
 def clear_vram_globally(*items_to_del):
     print(f"Attempting to clear VRAM. Received {len(items_to_del)} items to delete.")
     for item in items_to_del:
-        if hasattr(item, 'to'):
+        if hasattr(item, 'to') and hasattr(item, 'dtype') and item.dtype != torch.float16: # <-- ADDED CHECK
             try:
                 item.to('cpu')
             except Exception as e:

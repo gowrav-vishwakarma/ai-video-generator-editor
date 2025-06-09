@@ -6,12 +6,15 @@ import json
 from datetime import datetime
 import torch
 import time
+from importlib import import_module
+from typing import List
+from PIL import Image, ImageOps # <-- ADD THIS IMPORT
 
 # Fix for torch.classes issue if needed, though often it's better to manage environments.
 torch.classes.__path__ = []
 
 from project_manager import ProjectManager
-from config_manager import ContentConfig
+from config_manager import ContentConfig, ModuleSelectorConfig
 from ui_task_executor import UITaskExecutor
 
 # Page Config
@@ -19,13 +22,34 @@ st.set_page_config(page_title="AI Video Generation Pipeline", page_icon="🎥", 
 
 # Session State
 def init_session_state():
-    defaults = {'current_project': None, 'current_step': 'project_selection', 'auto_mode': True, 'ui_executor': None, 'speaker_audio': None, 'is_processing': False}
+    defaults = {
+        'current_project': None, 
+        'current_step': 'project_selection', 
+        'auto_mode': True, 
+        'ui_executor': None, 
+        'speaker_audio': None, 
+        'is_processing': False,
+        'new_project_characters': []
+        }
     for key, value in defaults.items():
         if key not in st.session_state: st.session_state[key] = value
 init_session_state()
 
+# --- NEW: Helper function to fix image orientation ---
+def load_and_correct_image_orientation(image_source):
+    """Loads an image and corrects its orientation based on EXIF data."""
+    try:
+        image = Image.open(image_source)
+        # The magic is in exif_transpose
+        corrected_image = ImageOps.exif_transpose(image)
+        return corrected_image
+    except Exception as e:
+        st.error(f"Could not load or correct image: {e}")
+        return None
+
 # Helper Functions
 def list_projects():
+    # ... (no changes) ...
     projects = []
     base_dir = "modular_reels_output"
     if not os.path.exists(base_dir): return []
@@ -41,10 +65,12 @@ def list_projects():
                     st.error(f"Error loading project {project_dir}: {e}")
     return sorted(projects, key=lambda p: p['created_at'], reverse=True)
 
+
 def go_to_step(step_name):
     st.session_state.current_step = step_name; st.rerun()
 
 def load_project(project_name):
+    # ... (no changes) ...
     project_manager = ProjectManager(f"modular_reels_output/{project_name}")
     if project_manager.load_project():
         st.session_state.current_project = project_manager
@@ -54,7 +80,9 @@ def load_project(project_name):
     else:
         st.error("Failed to load project.")
 
-def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd):
+
+def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_config):
+    # ... (no changes) ...
     name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{name}_{int(time.time())}"
     
@@ -68,6 +96,18 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
     )
     pm = ProjectManager(output_dir)
     pm.initialize_project(topic, cfg)
+
+    if characters:
+        for char_info in characters:
+            safe_name = char_info['name'].replace(" ", "_")
+            char_dir = os.path.join(output_dir, "characters", safe_name)
+            os.makedirs(char_dir, exist_ok=True)
+            ref_image_path = os.path.join(char_dir, "reference.png")
+            # We save the original, un-rotated image file
+            with open(ref_image_path, "wb") as f:
+                f.write(char_info['image'].getbuffer())
+            pm.add_character({"name": char_info['name'], "reference_image_path": ref_image_path})
+    
     st.session_state.current_project = pm
     st.session_state.ui_executor = UITaskExecutor(pm)
     st.session_state.auto_mode = auto
@@ -77,22 +117,23 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
         st.session_state.speaker_audio = speaker_path
         
     with st.spinner("Generating script..."):
-        # The first task is now part of the UI executor's responsibility
         success = st.session_state.ui_executor.task_executor.execute_task("generate_script", {"topic": topic})
 
     if success:
         st.success("Script generated!")
-        # Reload project to get the script data
         st.session_state.current_project.load_project()
+        st.session_state.new_project_characters = []
         go_to_step('processing_dashboard')
     else:
         st.error("Failed to generate script.")
         st.session_state.current_project = None
 
+
 # UI Rendering
 def render_project_selection():
     st.title("🎥 AI Video Generation Pipeline")
-    c1, c2 = st.columns([1, 2])
+    c1, c2 = st.columns([1.2, 2])
+    
     with c2:
         st.subheader("Existing Projects")
         for p in list_projects():
@@ -100,27 +141,69 @@ def render_project_selection():
                 pc1, pc2, pc3 = st.columns([4, 2, 1])
                 pc1.write(f"**{p['topic']}**"); pc2.write(f"_{p['created_at'].strftime('%Y-%m-%d %H:%M')}_")
                 pc3.button("Load", key=f"load_{p['name']}", on_click=load_project, args=(p['name'],), use_container_width=True)
+    
     with c1:
+        st.subheader("Create New Project")
+        
+        st.subheader("1. Add Characters (Optional)")
+        for i, char in enumerate(st.session_state.new_project_characters):
+            with st.container(border=True):
+                char_c1, char_c2 = st.columns([1, 4])
+                # --- FIX 1: Use the helper function here ---
+                corrected_image = load_and_correct_image_orientation(char['image'])
+                if corrected_image:
+                    char_c1.image(corrected_image, width=64)
+                char_c2.write(f"**{char['name']}**")
+        
+        with st.expander("Add a New Character"):
+            char_name = st.text_input("Character Name", key="char_name_input")
+            char_image = st.file_uploader("Upload Character Image", type=['png', 'jpg', 'jpeg'], key="char_image_input")
+            if st.button("Add Character to Project"):
+                if char_name and char_image:
+                    st.session_state.new_project_characters.append({"name": char_name, "image": char_image})
+                    st.rerun()
+                else:
+                    st.warning("Character name and image are required.")
+        
+        st.divider()
+        st.subheader("2. Define Project Settings & Create")
         with st.form("new_project_form"):
-            st.subheader("Create New Project")
             topic = st.text_area("Video Topic")
+            
+            st.write("**Content Settings**")
             flow = st.radio("Flow", ("Image to Video (High Quality)", "Text to Video (Fast)"), horizontal=True)
             use_svd = "Image to Video" in flow
             col1, col2 = st.columns(2)
             fmt = col1.selectbox("Format", ("Portrait", "Landscape"), index=0)
             length = col2.number_input("Length (s)", min_value=5, value=20, step=5)
-            st.write("Scene Count:"); c1, c2 = st.columns(2)
-            min_s = c1.number_input("Min", 1, 10, 2, 1)
-            max_s = c2.number_input("Max", min_s, 10, 5, 1)
+            st.write("Scene Count:")
+            c1_s, c2_s = st.columns(2)
+            min_s = c1_s.number_input("Min", 1, 10, 2, 1)
+            max_s = c2_s.number_input("Max", min_s, 10, 5, 1)
             auto = st.checkbox("Automatic Mode", value=True)
             audio = st.file_uploader("Reference Speaker Audio (Optional, .wav)", type=['wav'])
-            if st.form_submit_button("Create & Start", type="primary"):
-                if not topic: st.error("Topic required.")
-                else: create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd)
+
+            st.write("**Model Selection** (Read-only for now)")
+            module_cfg = ModuleSelectorConfig()
+            t2i_choice = st.selectbox("Image Model", [module_cfg.t2i_module.split('.')[-1]], disabled=True)
+            i2v_choice = st.selectbox("Image-to-Video Model", [module_cfg.i2v_module.split('.')[-1]], disabled=True, help="Used in Image-to-Video flow")
+            t2v_choice = st.selectbox("Text-to-Video Model", [module_cfg.t2v_module.split('.')[-1]], disabled=True, help="Used in Text-to-Video flow")
+            module_selections = {"t2i": t2i_choice, "i2v": i2v_choice, "t2v": t2v_choice}
+
+            if st.form_submit_button("Create & Start Project", type="primary"):
+                if not topic: 
+                    st.error("Topic required.")
+                else: 
+                    create_new_project(
+                        topic, auto, audio, fmt, length, min_s, max_s, use_svd,
+                        st.session_state.new_project_characters,
+                        module_selections
+                    )
 
 def render_processing_dashboard():
     project = st.session_state.current_project
     ui_executor = st.session_state.ui_executor
+    # ... (no changes to the start of this function) ...
     use_svd_flow = project.state.project_info.config.get("use_svd_flow", True)
 
     st.title(f"🎬 Project: {project.state.project_info.topic}")
@@ -136,6 +219,45 @@ def render_processing_dashboard():
         st.session_state.auto_mode = st.toggle("Automatic Mode", value=st.session_state.auto_mode, disabled=st.session_state.is_processing)
     st.divider()
 
+
+    with st.expander("👤 Project Characters & Subjects", expanded=True):
+        if not project.state.characters:
+            st.info("No characters defined. Add one to use features like IP-Adapter for consistency.")
+            
+        for char in project.state.characters:
+            with st.container(border=True):
+                c1, c2 = st.columns([1, 3])
+                with c1:
+                    # --- FIX 2: Use the helper function here too ---
+                    corrected_image = load_and_correct_image_orientation(char.reference_image_path)
+                    if corrected_image:
+                        st.image(corrected_image, caption=char.name, use_container_width=True)
+
+                with c2:
+                    with st.popover("Edit Character", use_container_width=True):
+                        with st.form(f"edit_char_{char.name}"):
+                            st.write(f"Editing: **{char.name}**")
+                            new_name = st.text_input("New Name", value=char.name)
+                            new_image = st.file_uploader("Upload New Image", type=['png', 'jpg', 'jpeg'], key=f"edit_img_{char.name}")
+                            if st.form_submit_button("Save", type="primary"):
+                                ui_executor.update_character(char.name, new_name, new_image)
+                                st.rerun()
+                    
+                    if st.button("Delete Character", key=f"del_char_{char.name}", type="secondary", use_container_width=True):
+                        ui_executor.delete_character(char.name)
+                        st.rerun()
+
+        with st.form("add_new_character_dashboard"):
+            st.subheader("Add New Character")
+            name = st.text_input("Character Name")
+            image = st.file_uploader("Upload Reference Image", type=['png', 'jpg', 'jpeg'])
+            if st.form_submit_button("Add Character", type="primary"):
+                if name and image:
+                    ui_executor.add_character(name, image)
+                    st.rerun()
+                else: st.error("Name and image are required.")
+    
+    # ... (The rest of the file from here is unchanged and correct) ...
     st.subheader("Content Generation Dashboard")
     with st.expander("Reference Speaker Audio"):
         uploaded_file = st.file_uploader("Upload New Speaker Audio (.wav)", key="speaker_upload", disabled=st.session_state.is_processing)
@@ -156,7 +278,23 @@ def render_processing_dashboard():
     for i, part in enumerate(project.state.script.narration_parts):
         with st.container(border=True):
             st.header(f"Scene {i+1}")
+            # --- Assign Characters to Scene ---
+            scene = project.get_scene_info(i)
+            if scene and project.state.characters:
+                all_char_names = [c.name for c in project.state.characters]
+                selected_chars = st.multiselect(
+                    "Characters in this Scene",
+                    options=all_char_names,
+                    default=scene.character_names,
+                    key=f"scene_chars_{i}",
+                    help="Select characters to feature. This will use their reference image for generation."
+                )
+                if selected_chars != scene.character_names:
+                    ui_executor.update_scene_characters(i, selected_chars)
+                    st.rerun()
+            
             st.subheader("Narration")
+
             new_text = st.text_area("Script", part.text, key=f"text_{i}", height=100, label_visibility="collapsed", disabled=st.session_state.is_processing)
             if new_text != part.text: ui_executor.update_narration_text(i, new_text); st.rerun()
 
@@ -232,6 +370,7 @@ def render_processing_dashboard():
                 st.error(f"❌ Failed on: {next_task_name}. Stopping."); st.session_state.is_processing = False; st.rerun()
 
 def render_video_assembly():
+    # ... (no changes) ...
     st.title("Final Video Assembly")
     project = st.session_state.current_project
     if st.button("⬅️ Back to Dashboard"): go_to_step('processing_dashboard')
@@ -245,19 +384,18 @@ def render_video_assembly():
             
     if st.button("Re-Assemble Final Video", type="primary"):
         with st.spinner("..."):
-            # Ensure all scenes are assembled first
             if not all(s.status == 'completed' for s in project.state.scenes):
                 for scene in project.state.scenes:
                     if scene.status != 'completed':
                         st.write(f"Assembling scene {scene.scene_idx+1}...")
                         st.session_state.ui_executor.task_executor.execute_task("assemble_scene", {"scene_idx": scene.scene_idx})
             
-            # Now assemble final video
             st.write("Assembling final video...")
             success = st.session_state.ui_executor.assemble_final_video()
             
         if success: st.success("Assembled!"); st.rerun()
         else: st.error("Failed.")
+
 
 # Main App Router
 if st.session_state.current_step == 'project_selection': render_project_selection()

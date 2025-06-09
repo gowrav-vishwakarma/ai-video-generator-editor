@@ -5,7 +5,7 @@ from diffusers import StableVideoDiffusionPipeline
 from diffusers.utils import load_image, export_to_video
 from PIL import Image
 
-from base_modules import BaseI2V, BaseModuleConfig
+from base_modules import BaseI2V, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally, ContentConfig
 
 class SvdI2VConfig(BaseModuleConfig):
@@ -17,6 +17,20 @@ class SvdI2VConfig(BaseModuleConfig):
 
 class SvdI2V(BaseI2V):
     Config = SvdI2VConfig
+
+    @classmethod
+    def get_capabilities(cls) -> ModuleCapabilities:
+        return ModuleCapabilities(
+            vram_gb_min=8.0,
+            ram_gb_min=12.0,
+            supported_formats=["Portrait", "Landscape"],
+            supports_ip_adapter=True,
+            supports_lora=True, # Juggernaut is a fine-tune, can easily use LoRAs
+            max_subjects=2, # Can handle one or two IP adapter images
+            accepts_text_prompt=False,
+            accepts_negative_prompt=True
+        )
+
 
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {

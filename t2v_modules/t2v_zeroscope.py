@@ -4,7 +4,7 @@ from typing import Dict, Any
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.utils import export_to_video
 
-from base_modules import BaseT2V, BaseModuleConfig
+from base_modules import BaseT2V, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally
 
 class ZeroscopeT2VConfig(BaseModuleConfig):
@@ -18,6 +18,20 @@ class ZeroscopeT2VConfig(BaseModuleConfig):
 
 class ZeroscopeT2V(BaseT2V):
     Config = ZeroscopeT2VConfig
+
+    @classmethod
+    def get_capabilities(cls) -> ModuleCapabilities:
+        return ModuleCapabilities(
+            vram_gb_min=8.0,
+            ram_gb_min=12.0,
+            supported_formats=["Portrait", "Landscape"],
+            supports_ip_adapter=True,
+            supports_lora=True, # Juggernaut is a fine-tune, can easily use LoRAs
+            max_subjects=2, # Can handle one or two IP adapter images
+            accepts_text_prompt=True,
+            accepts_negative_prompt=True
+        )
+
     
     def __init__(self, config: ZeroscopeT2VConfig):
         super().__init__(config)

@@ -3,7 +3,7 @@ import torch
 from typing import Optional, Dict, Any
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
 
-from base_modules import BaseT2I, BaseModuleConfig
+from base_modules import BaseT2I, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally
 
 class SdxlT2IConfig(BaseModuleConfig):
@@ -20,6 +20,20 @@ class SdxlT2I(BaseT2I):
     def __init__(self, config: SdxlT2IConfig):
         super().__init__(config)
         self.refiner_pipe = None
+
+        # --- NEW: Implement the capabilities contract ---
+    @classmethod
+    def get_capabilities(cls) -> ModuleCapabilities:
+        return ModuleCapabilities(
+            vram_gb_min=10.0, # SDXL with refiner is heavy
+            ram_gb_min=16.0,
+            supported_formats=["Portrait", "Landscape"],
+            supports_ip_adapter=True,
+            supports_lora=True,
+            max_subjects=2,
+            accepts_text_prompt=True,
+            accepts_negative_prompt=True
+        )
 
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {

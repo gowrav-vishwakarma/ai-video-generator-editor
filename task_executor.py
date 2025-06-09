@@ -116,7 +116,13 @@ class TaskExecutor:
         for i, (visual, motion) in enumerate(chunk_prompts):
             duration = self.content_cfg.model_max_video_chunk_duration if i < num_chunks - 1 else narration.duration - (i * self.content_cfg.model_max_video_chunk_duration)
             chunks.append({"chunk_idx": i, "target_duration": max(0.5, duration), "visual_prompt": visual, "motion_prompt": motion})
-        self.project_manager.add_scene(scene_idx, chunks)
+        
+        # --- NEW LOGIC HERE ---
+        # Get all character names that exist at this moment in the project.
+        all_character_names = [char.name for char in self.project_manager.state.characters]
+        print(f"Creating Scene {scene_idx} and assigning default characters: {all_character_names}")
+
+        self.project_manager.add_scene(scene_idx, chunks, character_names=all_character_names)
         return True
 
     def _execute_generate_chunk_image(self, scene_idx: int, chunk_idx: int, visual_prompt: str, **kwargs) -> bool:

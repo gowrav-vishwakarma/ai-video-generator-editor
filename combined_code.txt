@@ -273,14 +273,27 @@ def list_projects():
 
 
 def go_to_step(step_name):
-    st.session_state.current_step = step_name; st.rerun()
+    st.session_state.current_step = step_name
+    st.rerun()
 
 def load_project(project_name):
     project_manager = ProjectManager(f"modular_reels_output/{project_name}")
     if project_manager.load_project():
         st.session_state.current_project = project_manager
         st.session_state.ui_executor = UITaskExecutor(project_manager)
-        st.session_state.auto_mode = False; st.session_state.is_processing = False
+        st.session_state.auto_mode = False; 
+        st.session_state.is_processing = False
+        speaker_relative_path = project_manager.state.project_info.speaker_audio_path
+        if speaker_relative_path:
+            # Construct the full, absolute path for the TTS module
+            full_speaker_path = os.path.join(project_manager.output_dir, speaker_relative_path)
+            if os.path.exists(full_speaker_path):
+                st.session_state.speaker_audio = full_speaker_path
+            else:
+                st.session_state.speaker_audio = None
+                st.warning(f"Saved speaker audio not found at: {full_speaker_path}")
+        else:
+            st.session_state.speaker_audio = None
         go_to_step('processing_dashboard')
     else:
         st.error("Failed to load project.")
@@ -320,9 +333,15 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
     st.session_state.ui_executor = UITaskExecutor(pm)
     st.session_state.auto_mode = auto
     if audio:
-        speaker_path = os.path.join(output_dir, "speaker_audio.wav")
-        with open(speaker_path, "wb") as f: f.write(audio.getbuffer())
-        st.session_state.speaker_audio = speaker_path
+        # We will save a relative path to make the project folder more portable
+        relative_speaker_path = "speaker_audio.wav"
+        full_speaker_path = os.path.join(output_dir, relative_speaker_path)
+        with open(full_speaker_path, "wb") as f: f.write(audio.getbuffer())
+        
+        # Save the full path to session state for the current run
+        st.session_state.speaker_audio = full_speaker_path
+        # Save the relative path to the project's permanent state
+        pm.set_speaker_audio(relative_speaker_path)
         
     with st.spinner("Generating script..."):
         success = st.session_state.ui_executor.task_executor.execute_task("generate_script", {"topic": topic})
@@ -479,6 +498,16 @@ def render_project_selection():
 def render_processing_dashboard():
     project = st.session_state.current_project
     ui_executor = st.session_state.ui_executor
+
+     # --- We need a more flexible add_scene_callback now ---
+    def add_scene_at_callback(index_to_add):
+        """Callback to add a new scene at a specific index."""
+        st.session_state.ui_executor.add_new_scene(index_to_add)
+
+    def remove_scene_callback(scene_idx_to_remove):
+        """Callback to remove a specific scene."""
+        st.session_state.ui_executor.remove_scene(scene_idx_to_remove)
+    
     
     supports_characters = ui_executor.task_executor.active_flow_supports_characters
     use_svd_flow = project.state.project_info.config.get("use_svd_flow", True)
@@ -491,13 +520,13 @@ def render_processing_dashboard():
         if st.session_state.auto_mode:
             btn_text = "⏹️ Stop" if st.session_state.is_processing else "🚀 Start"
             if st.button(f"{btn_text} Automatic Processing", use_container_width=True, type="primary" if not st.session_state.is_processing else "secondary"):
-                st.session_state.is_processing = not st.session_state.is_processing; st.rerun()
+                st.session_state.is_processing = not st.session_state.is_processing
     with c3:
         st.session_state.auto_mode = st.toggle("Automatic Mode", value=st.session_state.auto_mode, disabled=st.session_state.is_processing)
     st.divider()
 
     if supports_characters:
-        with st.expander("👤 Project Characters & Subjects", expanded=True):
+        with st.expander("👤 Project Characters & Subjects", expanded=False):
             if not project.state.characters:
                 st.info("No characters defined. Add one to use features like IP-Adapter for consistency.")
             
@@ -514,9 +543,9 @@ def render_processing_dashboard():
                                 new_name = st.text_input("New Name", value=char.name)
                                 new_image = st.file_uploader("Upload New Image", type=['png', 'jpg', 'jpeg'], key=f"edit_img_{char.name}")
                                 if st.form_submit_button("Save", type="primary"):
-                                    ui_executor.update_character(char.name, new_name, new_image); st.rerun()
+                                    ui_executor.update_character(char.name, new_name, new_image)
                         if st.button("Delete Character", key=f"del_char_{char.name}", type="secondary", use_container_width=True):
-                            ui_executor.delete_character(char.name); st.rerun()
+                            ui_executor.delete_character(char.name)
 
             with st.form("add_new_character_dashboard"):
                 st.subheader("Add New Character")
@@ -524,7 +553,7 @@ def render_processing_dashboard():
                 image = st.file_uploader("Upload Reference Image", type=['png', 'jpg', 'jpeg'])
                 if st.form_submit_button("Add Character", type="primary"):
                     if name and image:
-                        ui_executor.add_character(name, image); st.rerun()
+                        ui_executor.add_character(name, image)
                     else: st.error("Name and image are required.")
     else:
         st.info("This project's workflow and selected models do not support character consistency (IP-Adapter).")
@@ -533,9 +562,16 @@ def render_processing_dashboard():
     with st.expander("Reference Speaker Audio"):
         uploaded_file = st.file_uploader("Upload New Speaker Audio (.wav)", key="speaker_upload", disabled=st.session_state.is_processing)
         if uploaded_file:
-            speaker_path = os.path.join(project.output_dir, "speaker_audio.wav")
+            relative_speaker_path = "speaker_audio.wav"
+            speaker_path = os.path.join(project.output_dir, relative_speaker_path)
             with open(speaker_path, "wb") as f: f.write(uploaded_file.getbuffer())
-            st.session_state.speaker_audio = speaker_path; st.success("Speaker audio updated!"); st.rerun()
+            
+            st.session_state.speaker_audio = speaker_path
+            # --- FIX: Update the project state when a new file is uploaded ---
+            project.set_speaker_audio(relative_speaker_path)
+            
+            st.success("Speaker audio updated!")
+            st.rerun() # Rerun to reflect the change
         if st.session_state.speaker_audio and os.path.exists(st.session_state.speaker_audio):
             st.write("Current audio:"); st.audio(st.session_state.speaker_audio)
         else:
@@ -546,9 +582,33 @@ def render_processing_dashboard():
         if st.button("Assemble / View Final Video ➡️", type="primary"): go_to_step('video_assembly')
     st.write("---")
 
+    # 1. "Add Scene at Beginning" button
+    # We create a container to nicely center the button
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c2:
+        st.button(
+            "➕ Insert Scene Here",
+            key="add_scene_at_0",
+            on_click=add_scene_at_callback,
+            args=(0,), # Add at index 0
+            use_container_width=True,
+            disabled=st.session_state.is_processing
+        )
+
     for i, part in enumerate(project.state.script.narration_parts):
         with st.container(border=True):
-            st.header(f"Scene {i+1}")
+            header_c1, header_c2 = st.columns([0.9, 0.1])
+            with header_c1:
+                st.header(f"Scene {i+1}")
+            with header_c2:
+                st.button(
+                    "❌", 
+                    key=f"delete_scene_{i}", 
+                    help="Delete this scene", 
+                    disabled=st.session_state.is_processing,
+                    on_click=remove_scene_callback,
+                    args=(i,) # Pass the scene index 'i' to the callback
+                )
             if supports_characters:
                 scene = project.get_scene_info(i)
                 if scene and project.state.characters:
@@ -561,19 +621,19 @@ def render_processing_dashboard():
                         help="Select characters to feature. This will use their reference image for generation."
                     )
                     if selected_chars != scene.character_names:
-                        ui_executor.update_scene_characters(i, selected_chars); st.rerun()
+                        ui_executor.update_scene_characters(i, selected_chars)
             
             st.subheader("Narration")
             new_text = st.text_area("Script", part.text, key=f"text_{i}", height=100, label_visibility="collapsed", disabled=st.session_state.is_processing)
-            if new_text != part.text: ui_executor.update_narration_text(i, new_text); st.rerun()
+            if new_text != part.text: ui_executor.update_narration_text(i, new_text)
 
             if part.audio_path and os.path.exists(part.audio_path):
                 st.audio(part.audio_path)
                 if st.button("Regen Audio", key=f"regen_audio_{i}", disabled=st.session_state.is_processing):
-                    with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio); st.rerun()
+                    with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio)
             else:
                 if st.button("Gen Audio", key=f"gen_audio_{i}", disabled=st.session_state.is_processing):
-                    with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio); st.rerun()
+                    with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio)
             
             st.divider(); st.subheader("Visual Chunks")
             scene = project.get_scene_info(i)
@@ -586,40 +646,54 @@ def render_processing_dashboard():
                             with p_col:
                                 st.write(f"**Chunk {chunk_idx + 1}**")
                                 vis = st.text_area("Visual", chunk.visual_prompt, key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
-                                if vis != chunk.visual_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis); st.rerun()
+                                if vis != chunk.visual_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis)
                                 mot = st.text_area("Motion", chunk.motion_prompt, key=f"m_prompt_{i}_{chunk_idx}", height=75, disabled=st.session_state.is_processing)
-                                if mot != chunk.motion_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, motion_prompt=mot); st.rerun()
+                                if mot != chunk.motion_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, motion_prompt=mot)
                             with i_col:
                                 st.write("**Image**"); has_image = chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path)
                                 if has_image: st.image(chunk.keyframe_image_path)
                                 else: st.info("Image pending...")
                                 btn_txt = "Regen Image" if has_image else "Gen Image"
                                 if st.button(btn_txt, key=f"gen_img_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
-                                    with st.spinner("..."): ui_executor.regenerate_chunk_image(i, chunk_idx); st.rerun()
+                                    with st.spinner("..."): ui_executor.regenerate_chunk_image(i, chunk_idx)
                             with v_col:
                                 st.write("**Video**"); has_video = chunk.video_path and os.path.exists(chunk.video_path)
                                 if has_video: st.video(chunk.video_path)
                                 else: st.info("Video pending...")
                                 btn_txt = "Regen Video" if has_video else "Gen Video"
                                 if st.button(btn_txt, key=f"gen_vid_{i}_{chunk_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
-                                    with st.spinner("..."): ui_executor.regenerate_chunk_video(i, chunk_idx); st.rerun()
+                                    with st.spinner("..."): ui_executor.regenerate_chunk_video(i, chunk_idx)
                         else: # T2V Flow
                             p_col, v_col = st.columns([2, 1])
                             with p_col:
                                 st.write(f"**Chunk {chunk_idx + 1} Prompt**")
                                 vis = st.text_area("Prompt", chunk.visual_prompt, key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
-                                if vis != chunk.visual_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis); st.rerun()
+                                if vis != chunk.visual_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis)
                             with v_col:
                                 st.write("**Video**"); has_video = chunk.video_path and os.path.exists(chunk.video_path)
                                 if has_video: st.video(chunk.video_path)
                                 else: st.info("Video pending...")
                                 btn_txt = "Regen Video" if has_video else "Gen Video"
                                 if st.button(btn_txt, key=f"gen_t2v_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
-                                    with st.spinner("..."): ui_executor.regenerate_chunk_t2v(i, chunk_idx); st.rerun()
+                                    with st.spinner("..."): ui_executor.regenerate_chunk_t2v(i, chunk_idx)
             elif part.status == "generated":
                  if st.button("Create Scene", key=f"create_scene_{i}", disabled=st.session_state.is_processing):
-                    with st.spinner("..."): ui_executor.create_scene(i); st.rerun()
+                    with st.spinner("..."): ui_executor.create_scene(i)
             else: st.info("Generate audio before scene creation.")
+        
+        # "Add Scene After This One" button
+        c1, c2, c3 = st.columns([1, 1, 1])
+        with c2:
+            st.button(
+                "➕ Insert Scene Here",
+                key=f"add_scene_at_{i+1}",
+                on_click=add_scene_at_callback,
+                args=(i + 1,), # Add at the next index
+                use_container_width=True,
+                disabled=st.session_state.is_processing
+            )
+        
+    st.divider()
 
     if st.session_state.auto_mode and st.session_state.is_processing:
         if next_task_name is None:
@@ -636,7 +710,7 @@ def render_processing_dashboard():
                 st.session_state.ui_executor = UITaskExecutor(fresh_pm)
                 st.rerun()
             else:
-                st.error(f"❌ Failed on: {next_task_name}. Stopping."); st.session_state.is_processing = False; st.rerun()
+                st.error(f"❌ Failed on: {next_task_name}. Stopping."); st.session_state.is_processing = False
 
 
 def render_video_assembly():
@@ -662,7 +736,7 @@ def render_video_assembly():
             st.write("Assembling final video...")
             success = st.session_state.ui_executor.assemble_final_video()
             
-        if success: st.success("Assembled!"); st.rerun()
+        if success: st.success("Assembled!")
         else: st.error("Failed.")
 
 
@@ -698,6 +772,7 @@ class ProjectInfo(BaseModel):
     last_modified: float = Field(default_factory=time.time)
     status: str = STATUS_IN_PROGRESS
     config: Dict[str, Any]
+    speaker_audio_path: Optional[str] = None # Stores the relative path within the project dir
 
 class NarrationPart(BaseModel):
     text: str
@@ -772,6 +847,12 @@ class ProjectManager:
     def initialize_project(self, topic: str, config: ContentConfig):
         project_info = ProjectInfo(topic=topic, config=config.model_dump())
         self.state = ProjectState(project_info=project_info)
+        self._save_state()
+    
+    def set_speaker_audio(self, relative_path: str):
+        """Saves the relative path of the speaker audio to the project state."""
+        if not self.state: return
+        self.state.project_info.speaker_audio_path = relative_path
         self._save_state()
         
     def load_project(self) -> bool:
@@ -969,6 +1050,70 @@ class ProjectManager:
         if scene:
             scene.character_names = character_names
             self._save_state()
+
+    def add_new_scene_at(self, scene_idx: int, narration_text: str = "New scene narration.", visual_prompt: str = "A vibrant new scene."):
+        """Inserts a new, empty scene at the specified index."""
+        if not self.state: return
+        print(f"Adding new scene at index {scene_idx}")
+
+        # 1. Insert new NarrationPart and VisualPrompt
+        new_narration = NarrationPart(text=narration_text)
+        new_visual = VisualPrompt(prompt=visual_prompt)
+        self.state.script.narration_parts.insert(scene_idx, new_narration)
+        self.state.script.visual_prompts.insert(scene_idx, new_visual)
+
+        # 2. Shift all subsequent Scene objects
+        # We process in reverse to avoid index conflicts during the loop
+        for i in range(len(self.state.scenes) - 1, -1, -1):
+            scene = self.state.scenes[i]
+            if scene.scene_idx >= scene_idx:
+                scene.scene_idx += 1
+        
+        # 3. Mark final video for reassembly
+        self._mark_final_for_reassembly()
+        self._save_state()
+
+    # NEW METHOD: Remove Scene
+    def remove_scene_at(self, scene_idx: int):
+        """Removes a scene and its assets at the specified index."""
+        if not self.state or scene_idx >= len(self.state.script.narration_parts): return
+        print(f"Removing scene at index {scene_idx}")
+
+        # 1. Remove the narration and visual prompt
+        del self.state.script.narration_parts[scene_idx]
+        del self.state.script.visual_prompts[scene_idx]
+
+        # 2. Find and remove the corresponding Scene object and its assets
+        scene_to_remove = self.get_scene_info(scene_idx)
+        if scene_to_remove:
+            # Delete physical assets associated with the scene
+            base_dir = self.output_dir
+            # Audio file
+            audio_path = os.path.join(base_dir, f"scene_{scene_idx}_audio.wav")
+            if os.path.exists(audio_path): os.remove(audio_path)
+            # Assembled scene video
+            assembled_path = os.path.join(base_dir, f"scene_{scene_idx}_assembled_video.mp4")
+            if os.path.exists(assembled_path): os.remove(assembled_path)
+            # Chunks (images and videos)
+            for chunk in scene_to_remove.chunks:
+                keyframe_path = os.path.join(base_dir, f"scene_{scene_idx}_chunk_{chunk.chunk_idx}_keyframe.png")
+                video_path_svd = os.path.join(base_dir, f"scene_{scene_idx}_chunk_{chunk.chunk_idx}_svd.mp4")
+                video_path_t2v = os.path.join(base_dir, f"scene_{scene_idx}_chunk_{chunk.chunk_idx}_t2v.mp4")
+                if os.path.exists(keyframe_path): os.remove(keyframe_path)
+                if os.path.exists(video_path_svd): os.remove(video_path_svd)
+                if os.path.exists(video_path_t2v): os.remove(video_path_t2v)
+            
+            # Remove from state
+            self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
+
+        # 3. Shift all subsequent Scene objects
+        for scene in self.state.scenes:
+            if scene.scene_idx > scene_idx:
+                scene.scene_idx -= 1
+        
+        # 4. Mark final video for reassembly
+        self._mark_final_for_reassembly()
+        self._save_state()
 
 
 
@@ -1365,6 +1510,20 @@ class UITaskExecutor:
     def update_scene_characters(self, scene_idx: int, character_names: List[str]):
         self.project_manager.update_scene_characters(scene_idx, character_names)
         st.toast(f"Characters for Scene {scene_idx+1} updated.", icon="🎬")
+    
+    # NEW METHOD: Add Scene
+    def add_new_scene(self, scene_idx: int):
+        """UI wrapper to add a new scene."""
+        self.project_manager.add_new_scene_at(scene_idx)
+        st.toast(f"New scene added at position {scene_idx + 1}!", icon="➕")
+        return True
+
+    # NEW METHOD: Remove Scene
+    def remove_scene(self, scene_idx: int):
+        """UI wrapper to remove a scene."""
+        self.project_manager.remove_scene_at(scene_idx)
+        st.toast(f"Scene {scene_idx + 1} removed!", icon="🗑️")
+        return True
 
 
 

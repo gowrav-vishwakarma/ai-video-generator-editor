@@ -165,9 +165,15 @@ class ProjectManager:
             self._mark_final_for_reassembly()
             self._save_state()
 
-    def add_scene(self, scene_idx: int, chunks: List[Dict]):
+    def add_scene(self, scene_idx: int, chunks: List[Dict], character_names: List[str]):
+        """Adds a new scene and assigns the provided characters to it."""
         if not self.state: return
-        scene_data = Scene(scene_idx=scene_idx, chunks=[Chunk(**c) for c in chunks])
+        # The Scene model now gets populated with character names on creation
+        scene_data = Scene(
+            scene_idx=scene_idx, 
+            chunks=[Chunk(**c) for c in chunks],
+            character_names=character_names
+        )
         self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
         self.state.scenes.append(scene_data)
         self.state.scenes.sort(key=lambda s: s.scene_idx)

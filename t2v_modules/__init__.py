@@ -1,0 +1,1 @@
+from .t2v_zeroscope import ZeroscopeT2V

@@ -1,0 +1,1 @@
+from .tts_coqui import CoquiTTSModule

@@ -37,10 +37,10 @@ coloredlogs==15.0.1
 comm==0.2.2
 confection==0.1.5
 consisid-eva-clip==1.0.2
-contourpy==1.3.2
-coqpit-config==0.2.0
-coqui-tts==0.26.0
-coqui-tts-trainer==0.2.3
+contourpy>=1.3.0
+coqpit-config>=0.2.0
+coqui-tts>=0.26.0
+coqui-tts-trainer>=0.2.3
 cryptacular==1.6.2
 cycler==0.12.1
 cymem==2.0.11
@@ -123,7 +123,7 @@ kiwisolver==1.4.8
 langcodes==3.5.0
 language-data==1.3.0
 lazy-loader==0.4
-librosa==0.11.0
+librosa>=0.11.0
 llvmlite==0.44.0
 marisa-trie==1.2.1
 markdown==3.8
@@ -149,7 +149,7 @@ networkx==3.5
 notebook==7.4.2
 notebook-shim==0.2.4
 num2words==0.5.14
-numba==0.61.2
+numba>=0.61.2
 numpy>=1.26.2
 nvidia-cublas-cu12==12.1.3.1
 nvidia-cuda-cupti-cu12==12.1.105
@@ -267,13 +267,13 @@ threadpoolctl==3.6.0
 tifffile==2025.5.10
 timm==1.0.15
 tinycss2==1.4.0
-tokenizers==0.20.3
+tokenizers>=0.20.3
 toml==0.10.2
 tomlkit==0.13.3
-torch==2.5.1+cu121
-torchaudio==2.5.1+cu121
+# torch==2.5.1+cu121
+# torchaudio==2.5.1+cu121
 torchsde==0.2.6
-torchvision==0.20.1+cu121
+# torchvision==0.20.1+cu121
 tornado==6.4.2
 tqdm==4.67.1
 traitlets==5.14.3

@@ -7,7 +7,7 @@ from TTS.api import TTS as CoquiTTS
 from moviepy import AudioFileClip
 from scipy.io import wavfile
 
-from base_modules import BaseTTS, BaseModuleConfig
+from base_modules import BaseTTS, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally
 
 class CoquiTTSConfig(BaseModuleConfig):
@@ -16,6 +16,14 @@ class CoquiTTSConfig(BaseModuleConfig):
 
 class CoquiTTSModule(BaseTTS):
     Config = CoquiTTSConfig
+
+    @classmethod
+    def get_capabilities(cls) -> ModuleCapabilities:
+        return ModuleCapabilities(
+            vram_gb_min=2.0, # XTTS is relatively lightweight
+            ram_gb_min=8.0,
+            supported_tts_languages=["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh-cn", "ja", "hu", "ko"]
+        )
 
     def _load_model(self):
         if self.model is None:

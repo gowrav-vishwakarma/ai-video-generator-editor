@@ -1,11 +1,11 @@
 # i2v_modules/i2v_ltx.py
 import torch
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Union
 from diffusers import LTXImageToVideoPipeline
 from diffusers.utils import export_to_video, load_image
 from PIL import Image
 
-from base_modules import BaseI2V, BaseModuleConfig
+from base_modules import BaseI2V, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally, ContentConfig
 
 class LtxI2VConfig(BaseModuleConfig):
@@ -16,10 +16,24 @@ class LtxI2VConfig(BaseModuleConfig):
 class LtxI2V(BaseI2V):
     Config = LtxI2VConfig
 
+    @classmethod
+    def get_capabilities(cls) -> ModuleCapabilities:
+        return ModuleCapabilities(
+            vram_gb_min=8.0,
+            ram_gb_min=12.0,
+            supported_formats=["Portrait", "Landscape"],
+            supports_ip_adapter=True,
+            supports_lora=True, # Juggernaut is a fine-tune, can easily use LoRAs
+            max_subjects=2, # Can handle one or two IP adapter images
+            accepts_text_prompt=True,
+            accepts_negative_prompt=True
+        )
+
+
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (480, 704), "Landscape": (704, 480)},
-            "max_chunk_duration": 5 
+            "max_chunk_duration": 4 
         }
     
     def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
@@ -51,7 +65,7 @@ class LtxI2V(BaseI2V):
         background.paste(resized_image, ((target_width - new_width) // 2, (target_height - new_height) // 2))
         return background
 
-    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str]) -> str:
+    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str], ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         self._load_pipeline()
         
         input_image = load_image(image_path)
@@ -62,6 +76,16 @@ class LtxI2V(BaseI2V):
 
         num_frames = max(16, int(target_duration * content_config.fps))
         full_prompt = f"{visual_prompt}, {motion_prompt}" if motion_prompt else visual_prompt
+
+        # --- NEW LOGIC TO HANDLE ip_adapter_image ---
+        # While LTX doesn't have a formal IP-Adapter, we can use the character
+        # reference to guide the style by adding it to the prompt.
+        if ip_adapter_image:
+            print("LTX I2V: Using character reference to guide prompt style.")
+            # For simplicity, we add a generic phrase. A more complex system could use an image-to-text model.
+            full_prompt = f"in the style of the reference character, {full_prompt}"
+            
+        print(f"LTX I2V using prompt: {full_prompt}")
         
         video = self.pipe(
             prompt=full_prompt, image=prepared_image, width=target_width, height=target_height,

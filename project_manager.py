@@ -2,6 +2,7 @@
 import os
 import time
 import logging
+import shutil
 from typing import Dict, List, Optional, Any, Tuple
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,7 @@ class ProjectInfo(BaseModel):
     last_modified: float = Field(default_factory=time.time)
     status: str = STATUS_IN_PROGRESS
     config: Dict[str, Any]
+    speaker_audio_path: Optional[str] = None # Stores the relative path within the project dir
 
 class NarrationPart(BaseModel):
     text: str
@@ -95,6 +97,12 @@ class ProjectManager:
         project_info = ProjectInfo(topic=topic, config=config.model_dump())
         self.state = ProjectState(project_info=project_info)
         self._save_state()
+    
+    def set_speaker_audio(self, relative_path: str):
+        """Saves the relative path of the speaker audio to the project state."""
+        if not self.state: return
+        self.state.project_info.speaker_audio_path = relative_path
+        self._save_state()
         
     def load_project(self) -> bool:
         if not os.path.exists(self.project_file): return False
@@ -114,7 +122,6 @@ class ProjectManager:
         self.state.script.hashtags = script_data.get("hashtags", [])
         self._save_state()
 
-    # ... get_next_pending_task and other methods remain the same ...
     def get_next_pending_task(self) -> Tuple[Optional[str], Optional[Dict]]:
         if not self.state: return None, None
         
@@ -158,9 +165,14 @@ class ProjectManager:
             self._mark_final_for_reassembly()
             self._save_state()
 
-    def add_scene(self, scene_idx: int, chunks: List[Dict]):
+    def add_scene(self, scene_idx: int, chunks: List[Dict], character_names: List[str]):
+        """Adds a new scene and assigns the provided characters to it."""
         if not self.state: return
-        scene_data = Scene(scene_idx=scene_idx, chunks=[Chunk(**c) for c in chunks])
+        scene_data = Scene(
+            scene_idx=scene_idx, 
+            chunks=[Chunk(**c) for c in chunks],
+            character_names=character_names
+        )
         self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
         self.state.scenes.append(scene_data)
         self.state.scenes.sort(key=lambda s: s.scene_idx)
@@ -233,6 +245,20 @@ class ProjectManager:
         self.state.characters.append(char)
         self._save_state()
 
+    def update_config_value(self, key: str, value: Any):
+        """Updates a specific key in the project's ContentConfig."""
+        if not self.state: return
+        
+        if key in ContentConfig.model_fields:
+            config_dict = self.state.project_info.config
+            if config_dict.get(key) != value:
+                config_dict[key] = value
+                self._mark_final_for_reassembly() # If assembly setting changes, reassembly is needed
+                self._save_state()
+                logger.info(f"Updated project config: set {key} to {value}")
+        else:
+            logger.warning(f"Warning: Attempted to update an unknown config key: {key}")
+
     def update_character(self, old_name: str, new_name: str, new_reference_image_path: Optional[str]):
         char = self.get_character(old_name)
         if not char: return
@@ -261,12 +287,12 @@ class ProjectManager:
         char_dir = os.path.join(self.output_dir, "characters", safe_name)
         if os.path.exists(char_dir):
             shutil.rmtree(char_dir)
-            print(f"Removed character asset directory: {char_dir}")
+            logger.info(f"Removed character asset directory: {char_dir}")
 
         self._save_state()
         
     def _reset_visuals_for_character(self, character_name: str):
-        print(f"Resetting visuals for scenes containing character: {character_name}")
+        logger.info(f"Resetting visuals for scenes containing character: {character_name}")
         for scene in self.state.scenes:
             if character_name in scene.character_names:
                 for chunk in scene.chunks:
@@ -291,3 +317,82 @@ class ProjectManager:
         if scene:
             scene.character_names = character_names
             self._save_state()
+
+    def add_new_scene_at(self, scene_idx: int, narration_text: str = "New scene narration.", visual_prompt: str = "A vibrant new scene."):
+        if not self.state: return
+        logger.info(f"Adding new scene at index {scene_idx}")
+
+        new_narration = NarrationPart(text=narration_text)
+        new_visual = VisualPrompt(prompt=visual_prompt)
+        self.state.script.narration_parts.insert(scene_idx, new_narration)
+        self.state.script.visual_prompts.insert(scene_idx, new_visual)
+
+        for i in range(len(self.state.scenes) - 1, -1, -1):
+            scene = self.state.scenes[i]
+            if scene.scene_idx >= scene_idx:
+                scene.scene_idx += 1
+        
+        self._mark_final_for_reassembly()
+        self._save_state()
+    
+    # --- NEW METHOD ---
+    def reset_scene_for_chunk_regeneration(self, scene_idx: int):
+        """Deletes a scene's assets and state, preparing it for chunk regeneration."""
+        if not self.state: return
+        
+        scene_to_reset = self.get_scene_info(scene_idx)
+        if not scene_to_reset:
+            logger.warning(f"No scene found at index {scene_idx} to reset.")
+            return
+
+        logger.info(f"Resetting Scene {scene_idx} for chunk regeneration.")
+        # Delete physical assets associated with the scene's chunks
+        for chunk in scene_to_reset.chunks:
+            if chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path):
+                try: os.remove(chunk.keyframe_image_path)
+                except OSError as e: logger.error(f"Error removing keyframe image {chunk.keyframe_image_path}: {e}")
+            if chunk.video_path and os.path.exists(chunk.video_path):
+                try: os.remove(chunk.video_path)
+                except OSError as e: logger.error(f"Error removing chunk video {chunk.video_path}: {e}")
+        
+        # Delete the assembled scene video if it exists
+        if scene_to_reset.assembled_video_path and os.path.exists(scene_to_reset.assembled_video_path):
+            try: os.remove(scene_to_reset.assembled_video_path)
+            except OSError as e: logger.error(f"Error removing assembled scene video {scene_to_reset.assembled_video_path}: {e}")
+
+        # Remove the Scene object from the state
+        self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
+        
+        # Mark the final video for reassembly
+        self._mark_final_for_reassembly()
+        self._save_state()
+
+
+    def remove_scene_at(self, scene_idx: int):
+        if not self.state or scene_idx >= len(self.state.script.narration_parts): return
+        logger.info(f"Removing scene at index {scene_idx}")
+
+        del self.state.script.narration_parts[scene_idx]
+        del self.state.script.visual_prompts[scene_idx]
+
+        scene_to_remove = self.get_scene_info(scene_idx)
+        if scene_to_remove:
+            base_dir = self.output_dir
+            audio_path = os.path.join(base_dir, f"scene_{scene_idx}_audio.wav")
+            if os.path.exists(audio_path): os.remove(audio_path)
+            assembled_path = os.path.join(base_dir, f"scene_{scene_idx}_assembled_video.mp4")
+            if os.path.exists(assembled_path): os.remove(assembled_path)
+            for chunk in scene_to_remove.chunks:
+                if chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path):
+                    os.remove(chunk.keyframe_image_path)
+                if chunk.video_path and os.path.exists(chunk.video_path):
+                    os.remove(chunk.video_path)
+            
+            self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
+
+        for scene in self.state.scenes:
+            if scene.scene_idx > scene_idx:
+                scene.scene_idx -= 1
+        
+        self._mark_final_for_reassembly()
+        self._save_state()

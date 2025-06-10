@@ -97,6 +97,8 @@ def assemble_scene_video_from_sub_clips(
     return final_scene_video_path
 
 
+# In video_assembly.py
+
 def assemble_final_reel(
     processed_scene_assets: List[Tuple[str, str, Dict[str, Any]]],
     config: ContentConfig,
@@ -136,6 +138,8 @@ def assemble_final_reel(
         print("No processed scene assets to assemble. Final video cannot be created.")
         return None
 
+    print(f"config.add_narration_text_to_video: {config.add_narration_text_to_video}")
+    
     final_scene_video_clips = [] # Renamed from final_scene_clips_for_reel for clarity
     
     # This list will store all clips that are loaded or created
@@ -213,21 +217,6 @@ def assemble_final_reel(
             else: # Durations match closely enough
                 video_clip_timed = temp_video_clip # temp_video_clip is already at its full duration here
 
-            # Audio duration handling is simpler because the video is now timed to actual_audio_duration
-            # We just need to ensure the audio_clip_for_scene is also exactly that duration.
-            # Your original code did padding/trimming for audio separately.
-            # Given video_clip_timed is now exactly actual_audio_duration,
-            # audio_clip_for_scene should ideally match.
-            # If audio_clip_for_scene.duration IS actual_audio_duration (from TTS generation), then no change.
-            # If TTS gave slightly different, we should use the *actual_audio_duration* from TTS.
-            # Let's assume audio_clip_for_scene.duration is the one we trust (actual_audio_duration)
-            
-            # No, your logic was: video is timed to narration["duration"] which IS actual_audio_duration.
-            # Audio is also timed to actual_audio_duration.
-            # My generate_audio_for_scene returns actual_audio_duration which includes a 0.1s buffer.
-            # So, the audio_clip_for_scene should be trimmed if it's slightly longer than its intended text part.
-            # This structure is a bit confusing. Let's assume `actual_audio_duration` is the *final desired duration for this scene*.
-            
             final_audio_for_scene = audio_clip_for_scene # Start with the loaded audio
             if final_audio_for_scene.duration > actual_audio_duration:
                 final_audio_for_scene = final_audio_for_scene.subclipped(0, actual_audio_duration)
@@ -241,42 +230,44 @@ def assemble_final_reel(
 
             # 5. Combine video and audio
             video_clip_with_audio = video_clip_timed.with_audio(final_audio_for_scene)
+            
+            # This list will hold the video clip, and conditionally, the text clip.
+            clips_for_composition = [video_clip_with_audio]
 
-            # 6. Add text caption
-            # Calculate font size based on video height (e.g., 5% of height)
-            base_font_size = int(config.final_output_resolution[1] * 0.05)  # 5% of height
-            # Ensure font size is within reasonable bounds
-            font_size = max(40, min(base_font_size, 60))  # Between 40 and 60
+            # 6. Add text caption (if enabled in config)
+            if config.add_narration_text_to_video:
+                print(f"Adding narration text for scene {i}...")
+                # Calculate font size based on video height (e.g., 5% of height)
+                base_font_size = int(config.final_output_resolution[1] * 0.05)  # 5% of height
+                font_size = max(40, min(base_font_size, 60))  # Between 40 and 60
 
-            # Calculate text width based on video width (80% of width)
-            text_width = int(config.final_output_resolution[0] * 0.8)
+                text_width = int(config.final_output_resolution[0] * 0.8)
+                aspect_ratio = config.final_output_resolution[0] / config.final_output_resolution[1]
+                vertical_position = 0.7 if aspect_ratio < 1 else 0.75
 
-            # Calculate vertical position based on aspect ratio
-            # For taller videos (like reels), position text higher
-            aspect_ratio = config.final_output_resolution[0] / config.final_output_resolution[1]
-            if aspect_ratio < 1:  # Portrait (like reels)
-                vertical_position = 0.7  # Position higher for portrait
-            else:  # Landscape (like YouTube)
-                vertical_position = 0.75  # Original position for landscape
+                # --- THIS IS THE FIX: Reverted to the original working syntax ---
+                text_clip_for_scene = TextClip(
+                    font_path_for_textclip,
+                    text=narration_text,
+                    font_size=font_size,
+                    color='white',
+                    stroke_color='black',
+                    stroke_width=2,
+                    method='caption',
+                    size=(text_width, None)
+                )
+                all_clips_to_close.append(text_clip_for_scene)
 
-            text_clip_for_scene = TextClip(
-                font_path_for_textclip,
-                text=narration_text,
-                font_size=font_size,
-                color='white',
-                stroke_color='black',
-                stroke_width=2,
-                method='caption',
-                size=(text_width, None)
-            )
-            all_clips_to_close.append(text_clip_for_scene)
+                text_clip_final = text_clip_for_scene.with_position(('center', vertical_position), relative=True).with_duration(actual_audio_duration)
+                
+                clips_for_composition.append(text_clip_final)
+            else:
+                print(f"Skipping narration text for scene {i} as per config.")
 
-            # Position text based on calculated vertical position
-            text_clip_final = text_clip_for_scene.with_position(('center', vertical_position), relative=True).with_duration(actual_audio_duration)
 
-            # 7. Combine video and text into final scene composite
+            # 7. Combine video and (optional) text into final scene composite
             scene_composite = CompositeVideoClip(
-                [video_clip_with_audio, text_clip_final],
+                clips_for_composition,
                 size=config.final_output_resolution # Ensure composite is target size
             )
             final_scene_video_clips.append(scene_composite)

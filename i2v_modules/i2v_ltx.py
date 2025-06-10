@@ -19,6 +19,7 @@ class LtxI2V(BaseI2V):
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
+            title="LTX, 8bit Load, Port/LandScape, 2 Sub, Take +/- Prompts, max 4 sec",
             vram_gb_min=8.0,
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],

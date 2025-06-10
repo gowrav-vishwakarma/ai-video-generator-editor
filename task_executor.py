@@ -2,6 +2,7 @@
 import logging
 import math
 import os
+import random
 from typing import Optional, Dict
 import torch
 from importlib import import_module
@@ -27,56 +28,80 @@ class TaskExecutor:
         if not module_selections:
             raise ValueError("Project state is missing module selections. Cannot initialize TaskExecutor.")
 
+        # --- START OF FIX: Use .get() for safe module loading to prevent crashes ---
+        
+        # LLM and TTS are always required
         LlmClass = _import_class(module_selections["llm"])
         self.llm_module = LlmClass(LlmClass.Config())
         
         TtsClass = _import_class(module_selections["tts"])
         self.tts_module = TtsClass(TtsClass.Config())
 
-        T2iClass = _import_class(module_selections["t2i"])
-        self.t2i_module = T2iClass(T2iClass.Config())
-
-        I2vClass = _import_class(module_selections["i2v"])
-        self.i2v_module = I2vClass(I2vClass.Config())
-
-        T2vClass = _import_class(module_selections["t2v"])
-        self.t2v_module = T2vClass(T2vClass.Config())
+        # Video modules are optional depending on the flow
+        self.t2i_module = None
+        self.i2v_module = None
+        self.t2v_module = None
         
-        # --- REFACTORED: Corrected Holistic Capability Check ---
-        self.active_flow_supports_characters: bool
-        if self.content_cfg.use_svd_flow:
-            # For I2V flow, ONLY the T2I module MUST support characters.
+        t2i_path = module_selections.get("t2i")
+        if t2i_path:
+            T2iClass = _import_class(t2i_path)
+            self.t2i_module = T2iClass(T2iClass.Config())
+
+        i2v_path = module_selections.get("i2v")
+        if i2v_path:
+            I2vClass = _import_class(i2v_path)
+            self.i2v_module = I2vClass(I2vClass.Config())
+
+        t2v_path = module_selections.get("t2v")
+        if t2v_path:
+            T2vClass = _import_class(t2v_path)
+            self.t2v_module = T2vClass(T2vClass.Config())
+
+        # Determine capabilities based on which modules were actually loaded
+        self.active_flow_supports_characters = False
+        if self.content_cfg.use_svd_flow and self.t2i_module:
             t2i_caps = self.t2i_module.get_capabilities()
             self.active_flow_supports_characters = t2i_caps.supports_ip_adapter
-            print("Decisive module for character support: T2I module.")
-        else:
-            # For T2V flow, only the T2V module matters.
+            logger.info("Decisive module for character support: T2I module.")
+        elif not self.content_cfg.use_svd_flow and self.t2v_module:
             t2v_caps = self.t2v_module.get_capabilities()
             self.active_flow_supports_characters = t2v_caps.supports_ip_adapter
-            print("Decisive module for character support: T2V module.")
+            logger.info("Decisive module for character support: T2V module.")
+        # --- END OF FIX ---
         
-        print(f"Holistic check: Active flow supports characters: {self.active_flow_supports_characters}")
-        
+        logger.info(f"Holistic check: Active flow supports characters: {self.active_flow_supports_characters}")
         self._configure_from_model_capabilities()
 
     def _configure_from_model_capabilities(self):
-        print("--- TaskExecutor: Configuring run from model capabilities... ---")
+        logger.info("--- TaskExecutor: Configuring run from model capabilities... ---")
         if self.content_cfg.use_svd_flow:
-            t2i_caps = self.t2i_module.get_model_capabilities()
-            i2v_caps = self.i2v_module.get_model_capabilities()
-            self.content_cfg.generation_resolution = t2i_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
-            self.content_cfg.model_max_video_chunk_duration = i2v_caps.get("max_chunk_duration", 3.0)
+            if self.t2i_module and self.i2v_module:
+                t2i_caps = self.t2i_module.get_model_capabilities()
+                i2v_caps = self.i2v_module.get_model_capabilities()
+                self.content_cfg.generation_resolution = t2i_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
+                self.content_cfg.model_max_video_chunk_duration = i2v_caps.get("max_chunk_duration", 3.0)
+            else:
+                logger.warning("Warning: T2I or I2V module not loaded for I2V flow. Using default configurations.")
         else: # T2V Flow
-            t2v_caps = self.t2v_module.get_model_capabilities()
-            self.content_cfg.generation_resolution = t2v_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
-            self.content_cfg.model_max_video_chunk_duration = t2v_caps.get("max_chunk_duration", 2.0)
-        print(f"Dynamically set Generation Resolution to: {self.content_cfg.generation_resolution}")
-        print(f"Dynamically set Max Chunk Duration to: {self.content_cfg.model_max_video_chunk_duration}s")
+            if self.t2v_module:
+                t2v_caps = self.t2v_module.get_model_capabilities()
+                self.content_cfg.generation_resolution = t2v_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
+                self.content_cfg.model_max_video_chunk_duration = t2v_caps.get("max_chunk_duration", 2.0)
+            else:
+                logger.warning("Warning: T2V module not loaded for T2V flow. Using default configurations.")
+
+        logger.info(f"Dynamically set Generation Resolution to: {self.content_cfg.generation_resolution}")
+        logger.info(f"Dynamically set Max Chunk Duration to: {self.content_cfg.model_max_video_chunk_duration}s")
         self.project_manager.state.project_info.config = self.content_cfg.model_dump()
         self.project_manager._save_state()
 
     def execute_task(self, task: str, task_data: Dict) -> bool:
         try:
+            # --- START OF FIX: Refresh config before every task to prevent stale state ---
+            self.content_cfg = ContentConfig(**self.project_manager.state.project_info.config)
+            logger.info(f"Executing task '{task}' with add_narration_text set to: {self.content_cfg.add_narration_text_to_video}")
+            # --- END OF FIX ---
+            
             task_map = {
                 "generate_script": self._execute_generate_script, "generate_audio": self._execute_generate_audio,
                 "create_scene": self._execute_create_scene, "generate_chunk_image": self._execute_generate_chunk_image,
@@ -95,7 +120,7 @@ class TaskExecutor:
         return True
 
     def _execute_generate_audio(self, scene_idx: int, text: str, speaker_wav: Optional[str] = None) -> bool:
-        path, duration = self.tts_module.generate_audio(text, self.content_cfg.output_dir, scene_idx, speaker_wav)
+        path, duration = self.tts_module.generate_audio(text, self.content_cfg.output_dir, scene_idx, language=self.content_cfg.language, speaker_wav=speaker_wav)
         self.project_manager.update_narration_part_status(scene_idx, "generated", path, duration if duration > 0.1 else 0.0)
         return True
 
@@ -105,7 +130,19 @@ class TaskExecutor:
         main_subject = self.project_manager.state.script.main_subject_description
         setting = self.project_manager.state.script.setting_description
         
-        num_chunks = math.ceil(narration.duration / self.content_cfg.model_max_video_chunk_duration) or 1
+        actual_audio_duration = narration.duration
+        max_chunk_duration = self.content_cfg.model_max_video_chunk_duration
+        
+        if actual_audio_duration <= 0 or max_chunk_duration <= 0:
+            num_chunks = 1
+            logger.warning(f"Warning: Invalid duration detected for Scene {scene_idx} (Audio: {actual_audio_duration}s, Max Chunk: {max_chunk_duration}s). Defaulting to 1 chunk.")
+        else:
+            num_chunks = math.ceil(actual_audio_duration / max_chunk_duration) or 1
+
+        logger.info("--- Calculating Chunks for Scene {} ---".format(scene_idx))
+        logger.info(f"  - Actual Audio Duration: {actual_audio_duration:.2f}s")
+        logger.info(f"  - Model's Max Chunk Duration: {max_chunk_duration:.2f}s")
+        logger.info(f"  - Calculated Number of Chunks: {num_chunks} ({actual_audio_duration:.2f}s / {max_chunk_duration:.2f}s)")
         
         chunk_prompts = self.llm_module.generate_chunk_visual_prompts(
             narration.text, visual_prompt.prompt, num_chunks, self.content_cfg, main_subject, setting
@@ -114,29 +151,42 @@ class TaskExecutor:
         
         chunks = []
         for i, (visual, motion) in enumerate(chunk_prompts):
-            duration = self.content_cfg.model_max_video_chunk_duration if i < num_chunks - 1 else narration.duration - (i * self.content_cfg.model_max_video_chunk_duration)
+            if i < num_chunks - 1:
+                duration = max_chunk_duration
+            else:
+                duration = actual_audio_duration - (i * max_chunk_duration)
+            
             chunks.append({"chunk_idx": i, "target_duration": max(0.5, duration), "visual_prompt": visual, "motion_prompt": motion})
-        self.project_manager.add_scene(scene_idx, chunks)
+        
+        all_character_names = [char.name for char in self.project_manager.state.characters]
+        logger.info(f"Creating Scene {scene_idx} and assigning default characters: {all_character_names}")
+        self.project_manager.add_scene(scene_idx, chunks, character_names=all_character_names)
         return True
 
     def _execute_generate_chunk_image(self, scene_idx: int, chunk_idx: int, visual_prompt: str, **kwargs) -> bool:
+        if not self.t2i_module:
+            logger.error("Attempted to generate image, but T2I module is not loaded for this workflow.")
+            return False
         w, h = self.content_cfg.generation_resolution
         path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_keyframe.png")
         
-        enhanced_prompt = self.t2i_module.enhance_prompt(visual_prompt)
+        base_seed = self.content_cfg.seed
+        chunk_seed = random.randint(0, 2**32 - 1) if base_seed == -1 else base_seed + scene_idx * 100 + chunk_idx
+        
+        negative_prompt = "worst quality, low quality, bad anatomy, text, watermark, jpeg artifacts, blurry"
         
         scene = self.project_manager.get_scene_info(scene_idx)
         ip_adapter_image_paths = []
         if scene and scene.character_names:
-            print(f"Found characters for Scene {scene_idx}: {scene.character_names}")
+            logger.info(f"Found characters for Scene {scene_idx}: {scene.character_names}")
             for name in scene.character_names:
                 char = self.project_manager.get_character(name)
                 if char and os.path.exists(char.reference_image_path):
                     ip_adapter_image_paths.append(char.reference_image_path)
         
         self.t2i_module.generate_image(
-            enhanced_prompt, path, w, h, 
-            ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
+            prompt=visual_prompt, negative_prompt=negative_prompt, output_path=path, 
+            width=w, height=h, ip_adapter_image=ip_adapter_image_paths or None, seed=chunk_seed
         )
         
         self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_IMAGE_GENERATED, keyframe_path=path)
@@ -144,6 +194,9 @@ class TaskExecutor:
         return True
 
     def _execute_generate_chunk_video(self, scene_idx: int, chunk_idx: int, visual_prompt: str, motion_prompt: Optional[str], **kwargs) -> bool:
+        if not self.i2v_module:
+            logger.error("Attempted to generate video from image, but I2V module is not loaded for this workflow.")
+            return False
         chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
         if not chunk.keyframe_image_path or not os.path.exists(chunk.keyframe_image_path): return False
         
@@ -151,23 +204,14 @@ class TaskExecutor:
         enhanced_motion = self.i2v_module.enhance_prompt(motion_prompt, "motion")
 
         scene = self.project_manager.get_scene_info(scene_idx)
-        ip_adapter_image_paths = []
-        if scene and scene.character_names:
-            for name in scene.character_names:
-                char = self.project_manager.get_character(name)
-                if char and os.path.exists(char.reference_image_path):
-                    ip_adapter_image_paths.append(char.reference_image_path)
+        ip_adapter_image_paths = [self.project_manager.get_character(name).reference_image_path for name in scene.character_names if self.project_manager.get_character(name)]
 
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_svd.mp4")
         
         sub_clip_path = self.i2v_module.generate_video_from_image(
-            image_path=chunk.keyframe_image_path, 
-            output_video_path=video_path, 
-            target_duration=chunk.target_duration, 
-            content_config=self.content_cfg,
-            visual_prompt=enhanced_visual, 
-            motion_prompt=enhanced_motion,
-            ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
+            image_path=chunk.keyframe_image_path, output_video_path=video_path, target_duration=chunk.target_duration, 
+            content_config=self.content_cfg, visual_prompt=enhanced_visual, motion_prompt=enhanced_motion,
+            ip_adapter_image=ip_adapter_image_paths or None
         )
 
         if sub_clip_path and os.path.exists(sub_clip_path):
@@ -176,6 +220,9 @@ class TaskExecutor:
         self.project_manager.update_chunk_status(scene_idx, chunk_idx, STATUS_FAILED); return False
 
     def _execute_generate_chunk_t2v(self, scene_idx: int, chunk_idx: int, visual_prompt: str, **kwargs) -> bool:
+        if not self.t2v_module:
+            logger.error("Attempted to generate video from text, but T2V module is not loaded for this workflow.")
+            return False
         chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
         num_frames = int(chunk.target_duration * self.content_cfg.fps)
         w, h = self.content_cfg.generation_resolution
@@ -183,18 +230,13 @@ class TaskExecutor:
         enhanced_prompt = self.t2v_module.enhance_prompt(visual_prompt)
         
         scene = self.project_manager.get_scene_info(scene_idx)
-        ip_adapter_image_paths = []
-        if scene and scene.character_names:
-            for name in scene.character_names:
-                char = self.project_manager.get_character(name)
-                if char and os.path.exists(char.reference_image_path):
-                    ip_adapter_image_paths.append(char.reference_image_path)
+        ip_adapter_image_paths = [self.project_manager.get_character(name).reference_image_path for name in scene.character_names if self.project_manager.get_character(name)]
         
         video_path = os.path.join(self.content_cfg.output_dir, f"scene_{scene_idx}_chunk_{chunk_idx}_t2v.mp4")
         
         sub_clip_path = self.t2v_module.generate_video_from_text(
             enhanced_prompt, video_path, num_frames, self.content_cfg.fps, w, h,
-            ip_adapter_image=ip_adapter_image_paths if ip_adapter_image_paths else None
+            ip_adapter_image=ip_adapter_image_paths or None
         )
 
         if sub_clip_path and os.path.exists(sub_clip_path):

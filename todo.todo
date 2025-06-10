@@ -1,13 +1,19 @@
-scene delete add facility
+
+
+
+narration to show or not.. font and position and size selection in project
+try chunk and script 3 times for format then fallback to fallback system.
 record user generation form in project status what user actually selcted to create ths video 
 store time taken in each segment, image, video, audio, assembly and final
-audio tts emotion parameters (not in narration)
 show better project in list, status, video duration etc. play from there.
 save vram and system ram in system.json and use it to filter models
-add all characters in all scene as default
-try chunk and script 3 times for format then fallback to fallback system.
-narration to show or not.. font and position and size selection in project
-tts language selection
 show module name from its config to dropdown
-on dashboard keep expander of characters closed and show characters name on expander title
 prompt finetunder button touse llm with different prompt (or a separate module ?)
+are we saving reference sound in project somewhere and its path .. and showing back in dashboard page?
+is the logic separate from UI so we can change ui part any time without chainging logic?
+
+✓ on dashboard keep expander of characters closed and show characters name on expander title
+✗ audio tts emotion parameters (not in narration)
+✗ tts language selection
+✓ scene delete add facility 
+✓ add all characters in all scene as default

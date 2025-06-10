@@ -41,7 +41,7 @@ class JuggernautT2I(BaseT2I):
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
-            title="Juggernaut XL v9 (Quality)",
+            title="Juggernaut XL v9 (Quality), 2 Subjects considered",
             vram_gb_min=8.0,
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],

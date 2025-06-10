@@ -1,6 +1,6 @@
-audio tts emotion parameters (not in narration)
-tts language selection
-on dashboard keep expander of characters closed and show characters name on expander title
+
+
+
 narration to show or not.. font and position and size selection in project
 try chunk and script 3 times for format then fallback to fallback system.
 record user generation form in project status what user actually selcted to create ths video 
@@ -11,5 +11,9 @@ show module name from its config to dropdown
 prompt finetunder button touse llm with different prompt (or a separate module ?)
 are we saving reference sound in project somewhere and its path .. and showing back in dashboard page?
 is the logic separate from UI so we can change ui part any time without chainging logic?
+
+✓ on dashboard keep expander of characters closed and show characters name on expander title
+✗ audio tts emotion parameters (not in narration)
+✗ tts language selection
 ✓ scene delete add facility 
 ✓ add all characters in all scene as default

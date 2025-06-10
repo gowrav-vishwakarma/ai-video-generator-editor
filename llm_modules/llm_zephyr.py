@@ -160,6 +160,14 @@ class ZephyrLLM(BaseLLM):
 
         for chunk_idx in range(num_chunks):
             print(f"--- Generating prompts for Chunk {chunk_idx + 1}/{num_chunks} ---")
+            
+            # --- NEW: Defensive check to prevent intermittent crashes ---
+            # This handles rare cases where the model/tokenizer might be cleared from memory
+            # between calls within the same task execution.
+            if self.model is None or self.tokenizer is None:
+                print("WARNING: LLM was unloaded unexpectedly. Forcing a reload before generating chunk prompt.")
+                self._load_model_and_tokenizer()
+
             user_prompt = f"""
             **Main Subject (MUST BE INCLUDED):** {main_subject}
             **Setting (MUST BE INCLUDED):** {setting}

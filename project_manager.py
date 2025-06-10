@@ -246,6 +246,21 @@ class ProjectManager:
         self.state.characters.append(char)
         self._save_state()
 
+    # NEW METHOD
+    def update_config_value(self, key: str, value: Any):
+        """Updates a specific key in the project's ContentConfig."""
+        if not self.state: return
+        
+        if key in ContentConfig.model_fields:
+            config_dict = self.state.project_info.config
+            if config_dict.get(key) != value:
+                config_dict[key] = value
+                self._mark_final_for_reassembly() # If assembly setting changes, reassembly is needed
+                self._save_state()
+                print(f"Updated project config: set {key} to {value}")
+        else:
+            print(f"Warning: Attempted to update an unknown config key: {key}")
+
     def update_character(self, old_name: str, new_name: str, new_reference_image_path: Optional[str]):
         char = self.get_character(old_name)
         if not char: return

@@ -4,7 +4,7 @@ import streamlit as st
 from task_executor import TaskExecutor
 from config_manager import ContentConfig
 import logging
-from typing import List, Optional
+from typing import List, Optional, Any
 import os
 from utils import load_and_correct_image_orientation
 
@@ -145,6 +145,13 @@ class UITaskExecutor:
         st.toast(f"Character '{name}' deleted!", icon="🗑️")
         return True
     
+    # NEW METHOD
+    def update_project_config(self, key: str, value: Any):
+        """UI wrapper to update a specific project configuration value."""
+        self.project_manager.update_config_value(key, value)
+        st.toast(f"Setting '{key.replace('_', ' ').title()}' updated.")
+        st.rerun()
+
     def update_scene_characters(self, scene_idx: int, character_names: List[str]):
         self.project_manager.update_scene_characters(scene_idx, character_names)
         st.toast(f"Characters for Scene {scene_idx+1} updated.", icon="🎬")

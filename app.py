@@ -64,7 +64,7 @@ def load_project(project_name):
         st.error("Failed to load project.")
 
 
-def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_selections, language):
+def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_selections, language, add_narration_text):
     name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{name}_{int(time.time())}"
     
@@ -76,7 +76,8 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
         max_scenes=max_s, 
         use_svd_flow=use_svd,
         module_selections=module_selections,
-        language=language
+        language=language,
+        add_narration_text_to_video=add_narration_text
     )
     pm = ProjectManager(output_dir)
     pm.initialize_project(topic, cfg)
@@ -261,8 +262,12 @@ def render_project_selection():
             c1_s, c2_s = st.columns(2)
             min_s = c1_s.number_input("Min Scenes", 1, 10, 2, 1)
             max_s = c2_s.number_input("Max Scenes", min_s, 10, 5, 1)
+            
+            st.divider()
+            st.info("Step 3: Final Touches") # Changed header for clarity
             auto = st.checkbox("Automatic Mode", value=True)
             audio = st.file_uploader("Reference Speaker Audio (Optional, .wav)", type=['wav'])
+            add_narration_text = st.checkbox("Add Narration Text to Video", value=True, help="Renders the narration text as captions on the final video.")
 
             submitted = st.form_submit_button("Create & Start Project", type="primary")
             if submitted:
@@ -274,7 +279,7 @@ def render_project_selection():
                     st.error("Topic required.")
                 else:
                     final_chars = st.session_state.new_project_characters if show_char_section else []
-                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections, final_language)
+                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections, final_language, add_narration_text)
         
         st.divider()
         st.subheader("Add Characters (Optional)")
@@ -376,6 +381,21 @@ def render_processing_dashboard():
         st.info("This project's workflow and selected models do not support character consistency (IP-Adapter).")
 
     st.subheader("Content Generation Dashboard")
+
+    with st.expander("Assembly & Export Settings"):
+        # Get current setting from config, default to True if not present for older projects
+        current_setting = project.state.project_info.config.get('add_narration_text_to_video', True)
+        
+        new_setting = st.checkbox(
+            "Add Narration Text to Video", 
+            value=current_setting,
+            help="Render the narration script as captions on the final video. Changing this will require a re-assembly."
+        )
+        # If the checkbox state in the UI is different from the project state, update the project
+        if new_setting != current_setting:
+            ui_executor.update_project_config('add_narration_text_to_video', new_setting)
+            # The ui_executor handles the rerun, which will refresh the widget's value
+
     with st.expander("Reference Speaker Audio"):
         uploaded_file = st.file_uploader("Upload New Speaker Audio (.wav)", key="speaker_upload", disabled=st.session_state.is_processing)
         if uploaded_file:
@@ -394,8 +414,26 @@ def render_processing_dashboard():
             st.info("No reference audio provided.")
 
     next_task_name, next_task_data = project.get_next_pending_task()
-    if (next_task_name == "assemble_final") or (next_task_name is None):
-        if st.button("Assemble / View Final Video ➡️", type="primary"): go_to_step('video_assembly')
+    
+    # --- START OF MODIFICATION ---
+    is_ready_for_assembly = (next_task_name == "assemble_final")
+    is_fully_complete = (next_task_name is None)
+
+    if is_ready_for_assembly or is_fully_complete:
+        if st.button("Assemble / View Final Video ➡️", type="primary"):
+            # If assembly is required (because status is pending), do it now.
+            if is_ready_for_assembly:
+                with st.spinner("Assembling final video with latest settings..."):
+                    success = ui_executor.assemble_final_video()
+                    if success:
+                        # After successful assembly, navigate to the viewing page.
+                        go_to_step('video_assembly')
+                    # If assembly fails, the error toast from the executor will show, 
+                    # and we stay on the dashboard for the user to see it.
+            else: # Otherwise, it's already complete, so just navigate.
+                go_to_step('video_assembly')
+    # --- END OF MODIFICATION ---
+    
     st.write("---")
 
     c1, c2, c3 = st.columns([1, 1, 1])
@@ -549,8 +587,13 @@ def render_video_assembly():
             st.write("Assembling final video...")
             success = st.session_state.ui_executor.assemble_final_video()
             
-        if success: st.success("Assembled!")
-        else: st.error("Failed.")
+        if success:
+            st.success("Assembled!")
+            # --- THIS IS THE FIX ---
+            # Force a rerun to make the page reload and display the new video.
+            st.rerun() 
+        else:
+            st.error("Failed.")
 
 
 # Main App Router

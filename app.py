@@ -135,6 +135,16 @@ def render_project_selection():
             if mod['path'] == path:
                 return mod['caps']
         return None
+        
+    # --- NEW: Helper function to format dropdown options ---
+    def format_module_option(mod_type: str, path: str) -> str:
+        """Gets the display title for a module from its path."""
+        caps = get_caps_from_path(mod_type, path)
+        if caps and caps.title:
+            return caps.title
+        # Fallback to class name if title is not available
+        return path.split('.')[-1] if path else "Not Selected"
+
 
     c1, c2 = st.columns([1.2, 2])
     
@@ -159,46 +169,40 @@ def render_project_selection():
         )
         use_svd = st.session_state.flow_choice == "Image to Video (High Quality)"
 
-        # --- FIX: MOVE THE DYNAMIC WIDGETS OUTSIDE THE FORM ---
         # The TTS selection needs to be outside the form so its on_change can work.
         tts_options = st.session_state.discovered_modules.get('tts', [])
         tts_paths = [m['path'] for m in tts_options]
         
-        # We use st.session_state to store the selection.
         st.selectbox(
             "Text-to-Speech Model", 
             options=tts_paths, 
-            format_func=lambda x: x.split('.')[-1],
-            key="selected_tts_module", # The key ensures the selection persists across reruns
+            # --- MODIFIED: Use the new formatter ---
+            format_func=lambda path: format_module_option('tts', path),
+            key="selected_tts_module",
             on_change=lambda: st.session_state.update() 
         )
 
-        # Get the capabilities of the selected TTS model from session_state
         selected_tts_caps = get_caps_from_path('tts', st.session_state.get('selected_tts_module'))
         
-        # The language dropdown also depends on the TTS model, so it stays outside the form too.
-        language = "en" # Default value
+        language = "en"
         if selected_tts_caps and selected_tts_caps.supported_tts_languages:
             supported_langs = selected_tts_caps.supported_tts_languages
-            # We use a key here as well to persist the choice.
             language = st.selectbox("Narration Language", options=supported_langs, index=0, key="selected_language")
         elif selected_tts_caps:
             st.caption("Language selection not available for this model.")
-        # --------------------------------------------------------
 
         with st.form("new_project_form"):
             has_characters = len(st.session_state.new_project_characters) > 0
             module_selections = {}
 
-            # Now, inside the form, we just record the selections made outside.
             module_selections['tts'] = st.session_state.get('selected_tts_module')
             
-            # Universal modules
-            module_selections['llm'] = st.selectbox("Language Model (LLM)", options=[m['path'] for m in st.session_state.discovered_modules.get('llm', [])], format_func=lambda x: x.split('.')[-1])
+            # --- MODIFIED: Use the new formatter for all module selectors ---
+            llm_options = st.session_state.discovered_modules.get('llm', [])
+            module_selections['llm'] = st.selectbox("Language Model (LLM)", 
+                                                    options=[m['path'] for m in llm_options], 
+                                                    format_func=lambda path: format_module_option('llm', path))
             
-            # (The original TTS selectbox is removed from here)
-
-            # Workflow-specific selections
             show_char_section = False
             if use_svd:
                 t2i_options = st.session_state.discovered_modules.get('t2i', [])
@@ -209,9 +213,14 @@ def render_project_selection():
                     st.error("No compatible Image Models (T2I) found for projects with characters.")
                     module_selections['t2i'] = None
                 else:
-                    module_selections['t2i'] = st.selectbox("Image Model (T2I)", options=[m['path'] for m in t2i_options], format_func=lambda x: x.split('.')[-1])
+                    module_selections['t2i'] = st.selectbox("Image Model (T2I)", 
+                                                            options=[m['path'] for m in t2i_options], 
+                                                            format_func=lambda path: format_module_option('t2i', path))
                 
-                module_selections['i2v'] = st.selectbox("Image-to-Video Model (I2V)", options=[m['path'] for m in st.session_state.discovered_modules.get('i2v', [])], format_func=lambda x: x.split('.')[-1])
+                i2v_options = st.session_state.discovered_modules.get('i2v', [])
+                module_selections['i2v'] = st.selectbox("Image-to-Video Model (I2V)", 
+                                                        options=[m['path'] for m in i2v_options], 
+                                                        format_func=lambda path: format_module_option('i2v', path))
                 module_selections['t2v'] = st.session_state.discovered_modules.get('t2v', [{}])[0].get('path', None)
                 
                 t2i_caps = get_caps_from_path('t2i', module_selections.get('t2i'))
@@ -229,7 +238,9 @@ def render_project_selection():
                     st.error("No compatible Text-to-Video models found for projects with characters.")
                     module_selections['t2v'] = None
                 else:
-                    module_selections['t2v'] = st.selectbox("Text-to-Video Model (T2V)", options=[m['path'] for m in t2v_options], format_func=lambda x: x.split('.')[-1])
+                    module_selections['t2v'] = st.selectbox("Text-to-Video Model (T2V)", 
+                                                            options=[m['path'] for m in t2v_options], 
+                                                            format_func=lambda path: format_module_option('t2v', path))
 
                 module_selections['t2i'] = st.session_state.discovered_modules.get('t2i', [{}])[0].get('path', None)
                 module_selections['i2v'] = st.session_state.discovered_modules.get('i2v', [{}])[0].get('path', None)
@@ -245,7 +256,7 @@ def render_project_selection():
             topic = st.text_area("Video Topic")
             
             col1, col2 = st.columns(2)
-            fmt = col1.selectbox("Format", ("Portrait", "Landscape"), index=0)
+            fmt = col1.selectbox("Format", ("Portrait", "Landscape"), index=1)
             length = col2.number_input("Length (s)", min_value=5, value=20, step=5)
             c1_s, c2_s = st.columns(2)
             min_s = c1_s.number_input("Min Scenes", 1, 10, 2, 1)
@@ -255,7 +266,6 @@ def render_project_selection():
 
             submitted = st.form_submit_button("Create & Start Project", type="primary")
             if submitted:
-                # We now retrieve the language from the session state, where it was stored by the widget outside the form.
                 final_language = st.session_state.get('selected_language', 'en') 
 
                 if not all(module_selections.values()):
@@ -264,7 +274,7 @@ def render_project_selection():
                     st.error("Topic required.")
                 else:
                     final_chars = st.session_state.new_project_characters if show_char_section else []
-                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections, final_language) # Pass the language here
+                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections, final_language)
         
         st.divider()
         st.subheader("Add Characters (Optional)")
@@ -325,7 +335,15 @@ def render_processing_dashboard():
     st.divider()
 
     if supports_characters:
-        with st.expander("👤 Project Characters & Subjects", expanded=False):
+        # --- MODIFICATION START ---
+        # Dynamically create the expander label based on existing characters.
+        expander_label = "👤 Project Characters & Subjects"
+        if project.state.characters:
+            char_names = ", ".join([c.name for c in project.state.characters])
+            expander_label = f"👤 Project Characters & Subjects: {char_names}"
+
+        with st.expander(expander_label, expanded=False):
+        # --- MODIFICATION END ---
             if not project.state.characters:
                 st.info("No characters defined. Add one to use features like IP-Adapter for consistency.")
             
@@ -366,11 +384,10 @@ def render_processing_dashboard():
             with open(speaker_path, "wb") as f: f.write(uploaded_file.getbuffer())
             
             st.session_state.speaker_audio = speaker_path
-            # --- FIX: Update the project state when a new file is uploaded ---
             project.set_speaker_audio(relative_speaker_path)
             
             st.success("Speaker audio updated!")
-            st.rerun() # Rerun to reflect the change
+            st.rerun() 
         if st.session_state.speaker_audio and os.path.exists(st.session_state.speaker_audio):
             st.write("Current audio:"); st.audio(st.session_state.speaker_audio)
         else:
@@ -381,15 +398,13 @@ def render_processing_dashboard():
         if st.button("Assemble / View Final Video ➡️", type="primary"): go_to_step('video_assembly')
     st.write("---")
 
-    # 1. "Add Scene at Beginning" button
-    # We create a container to nicely center the button
     c1, c2, c3 = st.columns([1, 1, 1])
     with c2:
         st.button(
             "➕ Insert Scene Here",
             key="add_scene_at_0",
             on_click=add_scene_at_callback,
-            args=(0,), # Add at index 0
+            args=(0,),
             use_container_width=True,
             disabled=st.session_state.is_processing
         )
@@ -406,7 +421,7 @@ def render_processing_dashboard():
                     help="Delete this scene", 
                     disabled=st.session_state.is_processing,
                     on_click=remove_scene_callback,
-                    args=(i,) # Pass the scene index 'i' to the callback
+                    args=(i,)
                 )
             if supports_characters:
                 scene = project.get_scene_info(i)
@@ -480,14 +495,13 @@ def render_processing_dashboard():
                     with st.spinner("..."): ui_executor.create_scene(i); st.rerun()
             else: st.info("Generate audio before scene creation.")
         
-        # "Add Scene After This One" button
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
             st.button(
                 "➕ Insert Scene Here",
                 key=f"add_scene_at_{i+1}",
                 on_click=add_scene_at_callback,
-                args=(i + 1,), # Add at the next index
+                args=(i + 1,),
                 use_container_width=True,
                 disabled=st.session_state.is_processing
             )

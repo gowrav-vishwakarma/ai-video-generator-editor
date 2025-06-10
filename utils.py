@@ -37,7 +37,7 @@ def list_projects():
                     projects.append({
                         'name': project_dir, 
                         'topic': data['project_info']['topic'], 
-                        'created_at': datetime.fromtimestamp(data['project_info']['created_at']), 
+                        'created_at': datetime.datetime.fromtimestamp(data['project_info']['created_at']), 
                         'status': data['project_info']['status']
                     })
                 except Exception as e:

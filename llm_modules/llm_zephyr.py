@@ -64,56 +64,83 @@ class ZephyrLLM(BaseLLM):
 
     def generate_script(self, topic: str, content_config: ContentConfig) -> Dict[str, Any]:
         self._load_model_and_tokenizer()
-        print(f"Generating script and context for topic: {topic}")
+        print(f"Generating script for topic: '{topic}' in language: {content_config.language}")
         
+        # --- MODIFICATION START ---
+        # Map language code to full name for better prompting
+        language_map = {
+            'en': 'English', 'es': 'Spanish', 'fr': 'French',
+            'de': 'German', 'it': 'Italian', 'pt': 'Portuguese',
+            'pl': 'Polish', 'tr': 'Turkish', 'ru': 'Russian',
+            'nl': 'Dutch', 'cs': 'Czech', 'ar': 'Arabic',
+            'zh-cn': 'Chinese (Simplified)', 'ja': 'Japanese',
+            'hu': 'Hungarian', 'ko': 'Korean', 'hi': 'Hindi'
+        }
+        target_language = language_map.get(content_config.language, 'English')
+
         system_prompt = (
-            "You are an AI assistant creating content for a short video. "
-            "First, describe the main subject and the general setting. "
-            "Then, create the narration, visuals, and hashtags. "
+            "You are a multilingual AI assistant creating content for a short video. "
+            "You will be asked to write the narration in a specific language, but all other content (visual prompts, descriptions, hashtags) must be in English for the video generation models. "
             "Your response must be a single, valid JSON object with these exact keys: "
             "\"main_subject_description\", \"setting_description\", \"narration\", \"visuals\", \"hashtags\"."
         )
         
         user_prompt = f"""
+        **IMPORTANT INSTRUCTIONS:**
+        1.  The **"narration"** text MUST be written in **{target_language}**. Use the native script if applicable (e.g., Devanagari for Hindi).
+        2.  Use proper punctuation (like commas and periods) in the narration for a natural-sounding voiceover.
+        3.  All other fields ("main_subject_description", "setting_description", "visuals", "hashtags") MUST remain in **English**.
+
+        ---
         Create content for a short video about "{topic}".
         The total narration should be ~{content_config.target_video_length_hint}s, with {content_config.min_scenes} to {content_config.max_scenes} scenes.
         Each scene's narration should be ~{content_config.max_scene_narration_duration_hint}s.
         
         Return your response in this exact JSON format:
         {{
-            "main_subject_description": "A detailed, consistent description of the main character or subject (e.g., 'Fluffy, a chubby but cute orange tabby cat with green eyes').",
-            "setting_description": "A description of the primary environment (e.g., 'a cozy, sunlit living room with plush furniture').",
+            "main_subject_description": "A detailed, consistent description of the main character or subject (e.g., 'Fluffy, a chubby but cute orange tabby cat with green eyes'). MUST BE IN ENGLISH.",
+            "setting_description": "A description of the primary environment (e.g., 'a cozy, sunlit living room with plush furniture'). MUST BE IN ENGLISH.",
             "narration": [
-                {{"scene": 1, "text": "First scene narration text.", "duration_estimate": {content_config.max_scene_narration_duration_hint}}}
+                {{"scene": 1, "text": "First scene narration text, written in {target_language}.", "duration_estimate": {content_config.max_scene_narration_duration_hint}}}
             ],
             "visuals": [
-                {{"scene": 1, "prompt": "Detailed visual prompt for scene 1, focusing on key elements, style, and mood."}}
+                {{"scene": 1, "prompt": "Detailed visual prompt for scene 1. MUST BE IN ENGLISH."}}
             ],
             "hashtags": ["relevantTag1", "relevantTag2"]
         }}
         """
+        # --- MODIFICATION END ---
+        
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
 
-        tokenized_chat = self.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(self.model.device)
-        outputs = self.model.generate(
-            input_ids=tokenized_chat, max_new_tokens=self.config.max_new_tokens_script, 
-            do_sample=True, top_k=self.config.top_k, top_p=self.config.top_p, 
-            temperature=self.config.temperature, pad_token_id=self.tokenizer.eos_token_id
-        )
-        decoded_output = self.tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
-        response_data = self._parse_llm_json_response(decoded_output, "script")
+        for attempt in range(3):
+            print(f"Attempt {attempt + 1} of 3 to generate valid script JSON...")
+            
+            tokenized_chat = self.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(self.model.device)
+            outputs = self.model.generate(
+                input_ids=tokenized_chat, max_new_tokens=self.config.max_new_tokens_script, 
+                do_sample=True, top_k=self.config.top_k, top_p=self.config.top_p, 
+                temperature=self.config.temperature, pad_token_id=self.tokenizer.eos_token_id
+            )
+            decoded_output = self.tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
+            response_data = self._parse_llm_json_response(decoded_output, "script")
 
-        if response_data and all(k in response_data for k in ["narration", "visuals", "main_subject_description"]):
-            # Reformat for what ProjectManager expects
-            return {
-                "main_subject_description": response_data.get("main_subject_description"),
-                "setting_description": response_data.get("setting_description"),
-                "narration": sorted(response_data.get("narration", []), key=lambda x: x["scene"]),
-                "visuals": [p["prompt"] for p in sorted(response_data.get("visuals", []), key=lambda x: x["scene"])],
-                "hashtags": response_data.get("hashtags", [])
-            }
+            if response_data and all(k in response_data for k in ["narration", "visuals", "main_subject_description"]):
+                print("Successfully generated and parsed valid script JSON.")
+                return {
+                    "main_subject_description": response_data.get("main_subject_description"),
+                    "setting_description": response_data.get("setting_description"),
+                    "narration": sorted(response_data.get("narration", []), key=lambda x: x["scene"]),
+                    "visuals": [p["prompt"] for p in sorted(response_data.get("visuals", []), key=lambda x: x["scene"])],
+                    "hashtags": response_data.get("hashtags", [])
+                }
+            else:
+                print(f"Attempt {attempt + 1} failed. The response was not a valid JSON or was missing required keys.")
+                if attempt < 2:
+                    print("Retrying...")
         
-        print("LLM script generation failed or gave invalid format. Using fallback.")
+        print("LLM script generation failed after 3 attempts. Using fallback.")
+        # Fallback remains in English as a safe default
         return {
             "main_subject_description": topic, "setting_description": "a simple background",
             "narration": [{"text": f"An intro to {topic}.", "duration_estimate": 5.0}],
@@ -123,13 +150,16 @@ class ZephyrLLM(BaseLLM):
     def generate_chunk_visual_prompts(self, scene_narration: str, original_scene_prompt: str, num_chunks: int, content_config: ContentConfig, main_subject: str, setting: str) -> List[Tuple[str, str]]:
         self._load_model_and_tokenizer()
         chunk_prompts = []
+        
+        # Define the prompts, which are the same for each chunk generation call
+        system_prompt = (
+            "You are an AI assistant. Your task is to generate a 'visual_prompt' and a 'motion_prompt' for a short video chunk. "
+            "The prompts MUST incorporate the provided main subject and setting. Do NOT change the subject. "
+            "Respond in this exact JSON format: {\"visual_prompt\": \"...\", \"motion_prompt\": \"...\"}"
+        )
+
         for chunk_idx in range(num_chunks):
-            # The context is now a mandatory part of the prompt to the LLM
-            system_prompt = (
-                "You are an AI assistant. Your task is to generate a 'visual_prompt' and a 'motion_prompt' for a short video chunk. "
-                "The prompts MUST incorporate the provided main subject and setting. Do NOT change the subject. "
-                "Respond in this exact JSON format: {\"visual_prompt\": \"...\", \"motion_prompt\": \"...\"}"
-            )
+            print(f"--- Generating prompts for Chunk {chunk_idx + 1}/{num_chunks} ---")
             user_prompt = f"""
             **Main Subject (MUST BE INCLUDED):** {main_subject}
             **Setting (MUST BE INCLUDED):** {setting}
@@ -141,23 +171,38 @@ class ZephyrLLM(BaseLLM):
             Based on ALL the information above, create a visual and motion prompt for chunk {chunk_idx + 1}/{num_chunks}.
             The visual prompt should be a specific, detailed moment consistent with the subject and setting.
             """
-            
             messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-            tokenized_chat = self.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(self.model.device)
-            outputs = self.model.generate(
-                input_ids=tokenized_chat, max_new_tokens=self.config.max_new_tokens_chunk_prompt, 
-                do_sample=True, temperature=self.config.temperature, pad_token_id=self.tokenizer.eos_token_id
-            )
-            decoded_output = self.tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
-            response_data = self._parse_llm_json_response(decoded_output, f"chunk {chunk_idx+1} prompt")
-
+            
             visual_prompt, motion_prompt = None, None
-            if isinstance(response_data, dict):
-                visual_prompt = response_data.get("visual_prompt") if isinstance(response_data.get("visual_prompt"), str) else None
-                motion_prompt = response_data.get("motion_prompt") if isinstance(response_data.get("motion_prompt"), str) else None
 
+            # --- MODIFICATION START: Add retry loop for each chunk ---
+            for attempt in range(3):
+                print(f"Attempt {attempt + 1} of 3 to generate valid prompt JSON for chunk {chunk_idx + 1}...")
+                
+                tokenized_chat = self.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(self.model.device)
+                outputs = self.model.generate(
+                    input_ids=tokenized_chat, max_new_tokens=self.config.max_new_tokens_chunk_prompt, 
+                    do_sample=True, temperature=self.config.temperature, pad_token_id=self.tokenizer.eos_token_id
+                )
+                decoded_output = self.tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
+                response_data = self._parse_llm_json_response(decoded_output, f"chunk {chunk_idx+1} prompt")
+
+                # Check for a dictionary with both required string keys
+                if (isinstance(response_data, dict) and 
+                    isinstance(response_data.get("visual_prompt"), str) and 
+                    isinstance(response_data.get("motion_prompt"), str)):
+                    
+                    visual_prompt = response_data["visual_prompt"]
+                    motion_prompt = response_data["motion_prompt"]
+                    print(f"Successfully generated and parsed prompts for chunk {chunk_idx + 1}.")
+                    break  # Exit the retry loop on success
+                else:
+                    print(f"Attempt {attempt + 1} failed for chunk {chunk_idx + 1}. Invalid JSON or missing keys.")
+            # --- MODIFICATION END ---
+
+            # If after 3 attempts, we still don't have prompts, use the fallback
             if not visual_prompt or not motion_prompt:
-                print(f"Using fallback prompts for chunk {chunk_idx + 1}")
+                print(f"All attempts failed for chunk {chunk_idx + 1}. Using fallback prompts.")
                 visual_prompt = f"{main_subject} in {setting}, {original_scene_prompt}"
                 motion_prompt = "gentle camera movement"
 

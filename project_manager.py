@@ -2,6 +2,7 @@
 import os
 import time
 import logging
+import shutil
 from typing import Dict, List, Optional, Any, Tuple
 from pydantic import BaseModel, Field
 
@@ -121,7 +122,6 @@ class ProjectManager:
         self.state.script.hashtags = script_data.get("hashtags", [])
         self._save_state()
 
-    # ... get_next_pending_task and other methods remain the same ...
     def get_next_pending_task(self) -> Tuple[Optional[str], Optional[Dict]]:
         if not self.state: return None, None
         
@@ -168,7 +168,6 @@ class ProjectManager:
     def add_scene(self, scene_idx: int, chunks: List[Dict], character_names: List[str]):
         """Adds a new scene and assigns the provided characters to it."""
         if not self.state: return
-        # The Scene model now gets populated with character names on creation
         scene_data = Scene(
             scene_idx=scene_idx, 
             chunks=[Chunk(**c) for c in chunks],
@@ -246,7 +245,6 @@ class ProjectManager:
         self.state.characters.append(char)
         self._save_state()
 
-    # NEW METHOD
     def update_config_value(self, key: str, value: Any):
         """Updates a specific key in the project's ContentConfig."""
         if not self.state: return
@@ -321,65 +319,77 @@ class ProjectManager:
             self._save_state()
 
     def add_new_scene_at(self, scene_idx: int, narration_text: str = "New scene narration.", visual_prompt: str = "A vibrant new scene."):
-        """Inserts a new, empty scene at the specified index."""
         if not self.state: return
         print(f"Adding new scene at index {scene_idx}")
 
-        # 1. Insert new NarrationPart and VisualPrompt
         new_narration = NarrationPart(text=narration_text)
         new_visual = VisualPrompt(prompt=visual_prompt)
         self.state.script.narration_parts.insert(scene_idx, new_narration)
         self.state.script.visual_prompts.insert(scene_idx, new_visual)
 
-        # 2. Shift all subsequent Scene objects
-        # We process in reverse to avoid index conflicts during the loop
         for i in range(len(self.state.scenes) - 1, -1, -1):
             scene = self.state.scenes[i]
             if scene.scene_idx >= scene_idx:
                 scene.scene_idx += 1
         
-        # 3. Mark final video for reassembly
+        self._mark_final_for_reassembly()
+        self._save_state()
+    
+    # --- NEW METHOD ---
+    def reset_scene_for_chunk_regeneration(self, scene_idx: int):
+        """Deletes a scene's assets and state, preparing it for chunk regeneration."""
+        if not self.state: return
+        
+        scene_to_reset = self.get_scene_info(scene_idx)
+        if not scene_to_reset:
+            print(f"No scene found at index {scene_idx} to reset.")
+            return
+
+        print(f"Resetting Scene {scene_idx} for chunk regeneration.")
+        # Delete physical assets associated with the scene's chunks
+        for chunk in scene_to_reset.chunks:
+            if chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path):
+                os.remove(chunk.keyframe_image_path)
+            if chunk.video_path and os.path.exists(chunk.video_path):
+                os.remove(chunk.video_path)
+        
+        # Delete the assembled scene video if it exists
+        if scene_to_reset.assembled_video_path and os.path.exists(scene_to_reset.assembled_video_path):
+            os.remove(scene_to_reset.assembled_video_path)
+
+        # Remove the Scene object from the state
+        self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
+        
+        # Mark the final video for reassembly
         self._mark_final_for_reassembly()
         self._save_state()
 
-    # NEW METHOD: Remove Scene
+
     def remove_scene_at(self, scene_idx: int):
-        """Removes a scene and its assets at the specified index."""
         if not self.state or scene_idx >= len(self.state.script.narration_parts): return
         print(f"Removing scene at index {scene_idx}")
 
-        # 1. Remove the narration and visual prompt
         del self.state.script.narration_parts[scene_idx]
         del self.state.script.visual_prompts[scene_idx]
 
-        # 2. Find and remove the corresponding Scene object and its assets
         scene_to_remove = self.get_scene_info(scene_idx)
         if scene_to_remove:
-            # Delete physical assets associated with the scene
             base_dir = self.output_dir
-            # Audio file
             audio_path = os.path.join(base_dir, f"scene_{scene_idx}_audio.wav")
             if os.path.exists(audio_path): os.remove(audio_path)
-            # Assembled scene video
             assembled_path = os.path.join(base_dir, f"scene_{scene_idx}_assembled_video.mp4")
             if os.path.exists(assembled_path): os.remove(assembled_path)
-            # Chunks (images and videos)
             for chunk in scene_to_remove.chunks:
-                keyframe_path = os.path.join(base_dir, f"scene_{scene_idx}_chunk_{chunk.chunk_idx}_keyframe.png")
-                video_path_svd = os.path.join(base_dir, f"scene_{scene_idx}_chunk_{chunk.chunk_idx}_svd.mp4")
-                video_path_t2v = os.path.join(base_dir, f"scene_{scene_idx}_chunk_{chunk.chunk_idx}_t2v.mp4")
-                if os.path.exists(keyframe_path): os.remove(keyframe_path)
-                if os.path.exists(video_path_svd): os.remove(video_path_svd)
-                if os.path.exists(video_path_t2v): os.remove(video_path_t2v)
+                if chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path):
+                    os.remove(chunk.keyframe_image_path)
+                if chunk.video_path and os.path.exists(chunk.video_path):
+                    os.remove(chunk.video_path)
             
-            # Remove from state
             self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
 
-        # 3. Shift all subsequent Scene objects
         for scene in self.state.scenes:
             if scene.scene_idx > scene_idx:
                 scene.scene_idx -= 1
         
-        # 4. Mark final video for reassembly
         self._mark_final_for_reassembly()
         self._save_state()

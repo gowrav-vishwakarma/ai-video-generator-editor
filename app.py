@@ -313,16 +313,18 @@ def render_processing_dashboard():
     project = st.session_state.current_project
     ui_executor = st.session_state.ui_executor
 
-     # --- We need a more flexible add_scene_callback now ---
     def add_scene_at_callback(index_to_add):
-        """Callback to add a new scene at a specific index."""
         st.session_state.ui_executor.add_new_scene(index_to_add)
 
     def remove_scene_callback(scene_idx_to_remove):
-        """Callback to remove a specific scene."""
         st.session_state.ui_executor.remove_scene(scene_idx_to_remove)
     
-    
+    # --- NEW: Callback for regenerating chunks ---
+    def regen_chunks_callback(scene_idx_to_regen):
+        with st.spinner(f"Regenerating chunks for Scene {scene_idx_to_regen + 1}..."):
+            st.session_state.ui_executor.regenerate_scene_chunks(scene_idx_to_regen)
+        st.rerun()
+
     supports_characters = ui_executor.task_executor.active_flow_supports_characters
     use_svd_flow = project.state.project_info.config.get("use_svd_flow", True)
 
@@ -340,15 +342,12 @@ def render_processing_dashboard():
     st.divider()
 
     if supports_characters:
-        # --- MODIFICATION START ---
-        # Dynamically create the expander label based on existing characters.
         expander_label = "👤 Project Characters & Subjects"
         if project.state.characters:
             char_names = ", ".join([c.name for c in project.state.characters])
             expander_label = f"👤 Project Characters & Subjects: {char_names}"
 
         with st.expander(expander_label, expanded=False):
-        # --- MODIFICATION END ---
             if not project.state.characters:
                 st.info("No characters defined. Add one to use features like IP-Adapter for consistency.")
             
@@ -383,18 +382,14 @@ def render_processing_dashboard():
     st.subheader("Content Generation Dashboard")
 
     with st.expander("Assembly & Export Settings"):
-        # Get current setting from config, default to True if not present for older projects
         current_setting = project.state.project_info.config.get('add_narration_text_to_video', True)
-        
         new_setting = st.checkbox(
             "Add Narration Text to Video", 
             value=current_setting,
             help="Render the narration script as captions on the final video. Changing this will require a re-assembly."
         )
-        # If the checkbox state in the UI is different from the project state, update the project
         if new_setting != current_setting:
             ui_executor.update_project_config('add_narration_text_to_video', new_setting)
-            # The ui_executor handles the rerun, which will refresh the widget's value
 
     with st.expander("Reference Speaker Audio"):
         uploaded_file = st.file_uploader("Upload New Speaker Audio (.wav)", key="speaker_upload", disabled=st.session_state.is_processing)
@@ -402,10 +397,8 @@ def render_processing_dashboard():
             relative_speaker_path = "speaker_audio.wav"
             speaker_path = os.path.join(project.output_dir, relative_speaker_path)
             with open(speaker_path, "wb") as f: f.write(uploaded_file.getbuffer())
-            
             st.session_state.speaker_audio = speaker_path
             project.set_speaker_audio(relative_speaker_path)
-            
             st.success("Speaker audio updated!")
             st.rerun() 
         if st.session_state.speaker_audio and os.path.exists(st.session_state.speaker_audio):
@@ -414,38 +407,23 @@ def render_processing_dashboard():
             st.info("No reference audio provided.")
 
     next_task_name, next_task_data = project.get_next_pending_task()
-    
-    # --- START OF MODIFICATION ---
     is_ready_for_assembly = (next_task_name == "assemble_final")
     is_fully_complete = (next_task_name is None)
 
     if is_ready_for_assembly or is_fully_complete:
         if st.button("Assemble / View Final Video ➡️", type="primary"):
-            # If assembly is required (because status is pending), do it now.
             if is_ready_for_assembly:
                 with st.spinner("Assembling final video with latest settings..."):
                     success = ui_executor.assemble_final_video()
-                    if success:
-                        # After successful assembly, navigate to the viewing page.
-                        go_to_step('video_assembly')
-                    # If assembly fails, the error toast from the executor will show, 
-                    # and we stay on the dashboard for the user to see it.
-            else: # Otherwise, it's already complete, so just navigate.
+                    if success: go_to_step('video_assembly')
+            else:
                 go_to_step('video_assembly')
-    # --- END OF MODIFICATION ---
     
     st.write("---")
 
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c2:
-        st.button(
-            "➕ Insert Scene Here",
-            key="add_scene_at_0",
-            on_click=add_scene_at_callback,
-            args=(0,),
-            use_container_width=True,
-            disabled=st.session_state.is_processing
-        )
+    insert_c1, insert_c2, insert_c3 = st.columns([1, 1, 1])
+    with insert_c2:
+        st.button("➕ Insert Scene Here", key="add_scene_at_0", on_click=add_scene_at_callback, args=(0,), use_container_width=True, disabled=st.session_state.is_processing)
 
     for i, part in enumerate(project.state.script.narration_parts):
         with st.container(border=True):
@@ -453,25 +431,13 @@ def render_processing_dashboard():
             with header_c1:
                 st.header(f"Scene {i+1}")
             with header_c2:
-                st.button(
-                    "❌", 
-                    key=f"delete_scene_{i}", 
-                    help="Delete this scene", 
-                    disabled=st.session_state.is_processing,
-                    on_click=remove_scene_callback,
-                    args=(i,)
-                )
+                st.button("❌", key=f"delete_scene_{i}", help="Delete this scene", disabled=st.session_state.is_processing, on_click=remove_scene_callback, args=(i,))
+            
             if supports_characters:
                 scene = project.get_scene_info(i)
                 if scene and project.state.characters:
                     all_char_names = [c.name for c in project.state.characters]
-                    selected_chars = st.multiselect(
-                        "Characters in this Scene",
-                        options=all_char_names,
-                        default=scene.character_names,
-                        key=f"scene_chars_{i}",
-                        help="Select characters to feature. This will use their reference image for generation."
-                    )
+                    selected_chars = st.multiselect("Characters in this Scene", options=all_char_names, default=scene.character_names, key=f"scene_chars_{i}", help="Select characters to feature. This will use their reference image for generation.")
                     if selected_chars != scene.character_names:
                         ui_executor.update_scene_characters(i, selected_chars)
             
@@ -479,17 +445,25 @@ def render_processing_dashboard():
             new_text = st.text_area("Script", part.text, key=f"text_{i}", height=100, label_visibility="collapsed", disabled=st.session_state.is_processing)
             if new_text != part.text: ui_executor.update_narration_text(i, new_text)
 
+            audio_col1, audio_col2 = st.columns(2)
             if part.audio_path and os.path.exists(part.audio_path):
-                st.audio(part.audio_path)
-                if st.button("Regen Audio", key=f"regen_audio_{i}", disabled=st.session_state.is_processing):
+                audio_col1.audio(part.audio_path)
+                if audio_col2.button("Regen Audio", key=f"regen_audio_{i}", disabled=st.session_state.is_processing, use_container_width=True):
                     with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio); st.rerun()
             else:
-                if st.button("Gen Audio", key=f"gen_audio_{i}", disabled=st.session_state.is_processing):
+                if audio_col1.button("Gen Audio", key=f"gen_audio_{i}", disabled=st.session_state.is_processing, use_container_width=True):
                     with st.spinner("..."): ui_executor.regenerate_audio(i, new_text, st.session_state.speaker_audio); st.rerun()
             
-            st.divider(); st.subheader("Visual Chunks")
+            st.divider()
+            
             scene = project.get_scene_info(i)
             if scene:
+                chunks_header_c1, chunks_header_c2 = st.columns([0.75, 0.25])
+                with chunks_header_c1:
+                    st.subheader("Visual Chunks")
+                with chunks_header_c2:
+                    st.button("Regen Chunks", key=f"regen_chunks_{i}", on_click=regen_chunks_callback, args=(i,), disabled=st.session_state.is_processing, use_container_width=True, help="Regenerate all visual/motion prompts for this scene.")
+                
                 for chunk in scene.chunks:
                     chunk_idx = chunk.chunk_idx
                     with st.container(border=True):
@@ -529,20 +503,13 @@ def render_processing_dashboard():
                                 if st.button(btn_txt, key=f"gen_t2v_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
                                     with st.spinner("..."): ui_executor.regenerate_chunk_t2v(i, chunk_idx); st.rerun()
             elif part.status == "generated":
-                 if st.button("Create Scene", key=f"create_scene_{i}", disabled=st.session_state.is_processing):
+                 if st.button("Create Scene", key=f"create_scene_{i}", disabled=st.session_state.is_processing, use_container_width=True):
                     with st.spinner("..."): ui_executor.create_scene(i); st.rerun()
             else: st.info("Generate audio before scene creation.")
         
-        c1, c2, c3 = st.columns([1, 1, 1])
-        with c2:
-            st.button(
-                "➕ Insert Scene Here",
-                key=f"add_scene_at_{i+1}",
-                on_click=add_scene_at_callback,
-                args=(i + 1,),
-                use_container_width=True,
-                disabled=st.session_state.is_processing
-            )
+        insert_c1, insert_c2, insert_c3 = st.columns([1, 1, 1])
+        with insert_c2:
+            st.button("➕ Insert Scene Here", key=f"add_scene_at_{i+1}", on_click=add_scene_at_callback, args=(i + 1,), use_container_width=True, disabled=st.session_state.is_processing)
         
     st.divider()
 
@@ -589,8 +556,6 @@ def render_video_assembly():
             
         if success:
             st.success("Assembled!")
-            # --- THIS IS THE FIX ---
-            # Force a rerun to make the page reload and display the new video.
             st.rerun() 
         else:
             st.error("Failed.")

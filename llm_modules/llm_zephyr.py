@@ -153,7 +153,7 @@ class ZephyrLLM(BaseLLM):
         
         # Define the prompts, which are the same for each chunk generation call
         system_prompt = (
-            "You are an AI assistant. Your task is to generate a 'visual_prompt' and a 'motion_prompt' for a short video chunk. "
+            "You are an Movie director. Your task is to generate a 'visual_prompt' and a 'motion_prompt' for a short video shot "
             "The prompts MUST incorporate the provided main subject and setting. Do NOT change the subject. "
             "Respond in this exact JSON format: {\"visual_prompt\": \"...\", \"motion_prompt\": \"...\"}"
         )
@@ -178,6 +178,11 @@ class ZephyrLLM(BaseLLM):
             
             Based on ALL the information above, create a visual and motion prompt for chunk {chunk_idx + 1}/{num_chunks}.
             The visual prompt should be a specific, detailed moment consistent with the subject and setting.
+            try to describe the visual prompt in minimum words but in very specific details what a director would want  the image to look like.
+            Descrive character, subject and envrionment in words, only chose important words no need to make complete sentances.
+            try to describe the visual prompt in minimum words but in very specific details what a director would want  the image to look like.
+            Descrive character, subject and envrionment in words, only chose important words no need to make complete sentances.
+            Also descirbe camera mm, shot type, location, lighting, color, mood, etc.
             """
             messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
             

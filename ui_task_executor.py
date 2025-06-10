@@ -23,7 +23,6 @@ class UITaskExecutor:
             st.error("Cannot initialize task executor: Project state not found.")
             return
         try:
-            # TaskExecutor now only needs the project_manager to initialize itself
             self.task_executor = TaskExecutor(self.project_manager)
         except Exception as e:
             logger.error(f"Failed to initialize TaskExecutor: {e}", exc_info=True)
@@ -53,10 +52,28 @@ class UITaskExecutor:
         self.project_manager.load_project()
         return success
 
+    # --- NEW METHOD ---
+    def regenerate_scene_chunks(self, scene_idx: int) -> bool:
+        """Resets a scene and triggers the 'create_scene' task to regenerate chunks."""
+        if not self.task_executor: return False
+
+        # First, reset the scene, clearing old chunks and assets
+        self.project_manager.reset_scene_for_chunk_regeneration(scene_idx)
+        st.toast(f"Cleared old chunks for Scene {scene_idx + 1}. Regenerating...", icon="♻️")
+
+        # Now, execute the create_scene task which will find the scene missing and create it
+        success = self.task_executor.execute_task("create_scene", {"scene_idx": scene_idx})
+        
+        if success:
+            st.toast(f"New chunks for Scene {scene_idx + 1} generated!", icon="✨")
+        else:
+            st.error(f"Failed to regenerate chunks for Scene {scene_idx + 1}.")
+        
+        self.project_manager.load_project()
+        return success
+
     def regenerate_chunk_image(self, scene_idx: int, chunk_idx: int) -> bool:
         if not self.task_executor: return False
-        # No need to call update_chunk_content if prompts are not changing
-        # It resets status, which is what we want for a regen.
         self.project_manager.update_chunk_content(scene_idx, chunk_idx) 
         chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
         task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk.visual_prompt}
@@ -68,7 +85,6 @@ class UITaskExecutor:
 
     def regenerate_chunk_video(self, scene_idx: int, chunk_idx: int) -> bool:
         if not self.task_executor: return False
-        # Also reset status for regen
         self.project_manager.update_chunk_content(scene_idx, chunk_idx)
         chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
         task_data = {
@@ -108,7 +124,6 @@ class UITaskExecutor:
         os.makedirs(char_dir, exist_ok=True)
         ref_image_path = os.path.join(char_dir, "reference.png")
         
-        # --- FIX: Correct orientation before saving ---
         corrected_image = load_and_correct_image_orientation(image_file)
         if corrected_image:
             corrected_image.save(ref_image_path, "PNG")
@@ -132,7 +147,6 @@ class UITaskExecutor:
             if corrected_image:
                 corrected_image.save(ref_image_path, "PNG")
             else:
-                # If image processing fails, don't update the image path.
                 st.error("Failed to process the new image. Character image was not updated.")
                 ref_image_path = None 
 
@@ -145,7 +159,6 @@ class UITaskExecutor:
         st.toast(f"Character '{name}' deleted!", icon="🗑️")
         return True
     
-    # NEW METHOD
     def update_project_config(self, key: str, value: Any):
         """UI wrapper to update a specific project configuration value."""
         self.project_manager.update_config_value(key, value)
@@ -156,14 +169,12 @@ class UITaskExecutor:
         self.project_manager.update_scene_characters(scene_idx, character_names)
         st.toast(f"Characters for Scene {scene_idx+1} updated.", icon="🎬")
     
-    # NEW METHOD: Add Scene
     def add_new_scene(self, scene_idx: int):
         """UI wrapper to add a new scene."""
         self.project_manager.add_new_scene_at(scene_idx)
         st.toast(f"New scene added at position {scene_idx + 1}!", icon="➕")
         return True
 
-    # NEW METHOD: Remove Scene
     def remove_scene(self, scene_idx: int):
         """UI wrapper to remove a scene."""
         self.project_manager.remove_scene_at(scene_idx)

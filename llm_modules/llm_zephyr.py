@@ -22,6 +22,7 @@ class ZephyrLLM(BaseLLM):
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
+            title="Zephyr 7B",
             vram_gb_min=8.0,
             ram_gb_min=16.0,
             # LLM-specific capabilities are not the main focus, so we use defaults.

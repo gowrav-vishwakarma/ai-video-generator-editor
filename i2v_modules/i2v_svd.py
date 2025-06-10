@@ -21,6 +21,7 @@ class SvdI2V(BaseI2V):
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
+            title="SVD, Float16, Port/Landscape, No Prompt just image, Max 2 Sec",
             vram_gb_min=8.0,
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],

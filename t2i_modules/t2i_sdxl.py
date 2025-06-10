@@ -25,6 +25,7 @@ class SdxlT2I(BaseT2I):
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
+            title="SDXL fp16, Port/Landscape",
             vram_gb_min=10.0, # SDXL with refiner is heavy
             ram_gb_min=16.0,
             supported_formats=["Portrait", "Landscape"],

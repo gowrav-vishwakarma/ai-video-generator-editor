@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 class ModuleCapabilities(BaseModel):
     """A standardized spec sheet for all generation modules."""
     
+    title: str = Field(description="Title to show in dropdowns")
+
     # Resource Requirements
     vram_gb_min: float = Field(default=4.0, description="Minimum GPU VRAM required in GB.")
     ram_gb_min: float = Field(default=8.0, description="Minimum system RAM required in GB.")

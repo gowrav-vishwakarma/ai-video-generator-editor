@@ -19,6 +19,7 @@ class CoquiTTSModule(BaseTTS):
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
+            title="XTTS, Multi-Language, Documentary Style",
             vram_gb_min=2.0, # XTTS is relatively lightweight
             ram_gb_min=8.0,
             supported_tts_languages=["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh-cn", "ja", "hu", "ko", "hi"]

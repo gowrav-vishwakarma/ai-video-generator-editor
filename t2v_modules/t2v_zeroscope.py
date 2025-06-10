@@ -22,6 +22,7 @@ class ZeroscopeT2V(BaseT2V):
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
+            title="Zeroscope, Port/Landscape, No Subject, 2 sec",
             vram_gb_min=8.0,
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],

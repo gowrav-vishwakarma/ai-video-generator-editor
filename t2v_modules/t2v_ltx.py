@@ -30,6 +30,7 @@ class LtxT2V(BaseT2V):
     def get_capabilities(cls) -> ModuleCapabilities:
         """This module is for pure T2V and does NOT support IP-Adapters."""
         return ModuleCapabilities(
+            title="LTX, Port/Landscape, No Subject, 5 sec",
             vram_gb_min=8.0,
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],

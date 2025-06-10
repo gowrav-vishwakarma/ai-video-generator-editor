@@ -4,14 +4,27 @@ from typing import List, Optional, Dict, Any, Union
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
 from diffusers.utils import load_image
 
+# --- NEW: Import BitsAndBytesConfig for quantization ---
+from transformers import BitsAndBytesConfig
+
+# --- Gracefully import the correct scheduler ---
+try:
+    from diffusers import DPMMSolverMultistepScheduler as JuggernautScheduler
+    print("INFO: Loaded recommended DPMMSolverMultistepScheduler for Juggernaut.")
+except ImportError:
+    print("WARNING: DPMMSolverMultistepScheduler not found. Falling back to DPMSolverMultistepScheduler.")
+    from diffusers import DPMSolverMultistepScheduler as JuggernautScheduler
+
 from base_modules import BaseT2I, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally
 
 class JuggernautT2IConfig(BaseModuleConfig):
     model_id: str = "RunDiffusion/Juggernaut-XL-v9"
     refiner_id: Optional[str] = None
-    num_inference_steps: int = 30
-    guidance_scale: float = 7.5
+    # --- NEW: Flag to control memory-saving quantization ---
+    use_8bit_quantization: bool = True
+    num_inference_steps: int = 35
+    guidance_scale: float = 6.0 
     ip_adapter_repo: str = "h94/IP-Adapter"
     ip_adapter_subfolder: str = "sdxl_models"
     ip_adapter_weight_name: str = "ip-adapter_sdxl.bin"
@@ -28,7 +41,7 @@ class JuggernautT2I(BaseT2I):
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
-            title="Juggernaut, fp16, Port/Landscape, 2 Subjects considered",
+            title="Juggernaut XL v9 (Quality)",
             vram_gb_min=8.0,
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],
@@ -41,17 +54,43 @@ class JuggernautT2I(BaseT2I):
 
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
-            "resolutions": {"Portrait": (896, 1152), "Landscape": (1344, 768)},
+            "resolutions": {"Portrait": (832, 1216), "Landscape": (1216, 832)},
             "max_chunk_duration": 3.0 
         }
 
+    def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
+        quality_keywords = "cinematic photography, hyperdetailed, (skin details:1.1), 8k, professional lighting"
+        if prompt.strip().endswith(','):
+            return f"{prompt} {quality_keywords}"
+        else:
+            return f"{prompt}, {quality_keywords}"
+
     def _load_pipeline(self):
         if self.pipe is None:
-            print(f"Loading T2I pipeline (Juggernaut): {self.config.model_id}... to {DEVICE}")
-            self.pipe = StableDiffusionXLPipeline.from_pretrained(
-                self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True, device_map="balanced" 
-            )
-            print("Juggernaut Base pipeline loaded.")
+            if self.config.use_8bit_quantization:
+                print("Loading T2I pipeline (Juggernaut) with 8-bit quantization to save VRAM...")
+                bnb_config = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                )
+                # --- START OF FIX: Remove device_map and use .to(DEVICE) instead ---
+                # This prevents the accelerate hook conflict when loading IP-Adapters later.
+                self.pipe = StableDiffusionXLPipeline.from_pretrained(
+                    self.config.model_id,
+                    quantization_config=bnb_config,
+                    torch_dtype=torch.float16,
+                    variant="fp16",
+                    use_safetensors=True,
+                ).to(DEVICE)
+                # --- END OF FIX ---
+            else:
+                print(f"Loading T2I pipeline (Juggernaut) in full precision to {DEVICE}...")
+                self.pipe = StableDiffusionXLPipeline.from_pretrained(
+                    self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+                ).to(DEVICE)
+            
+            self.pipe.scheduler = JuggernautScheduler.from_config(self.pipe.scheduler.config, use_karras_sigmas=True)
+            print(f"Juggernaut pipeline configured with {JuggernautScheduler.__name__} sampler.")
+
             if self.config.refiner_id:
                 print(f"Refiner specified but not typically used with Juggernaut, skipping load.")
 
@@ -63,10 +102,17 @@ class JuggernautT2I(BaseT2I):
         self._loaded_ip_adapter_count = 0
         print("T2I (Juggernaut) VRAM cleared.")
 
-    def generate_image(self, prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
+    def generate_image(self, prompt: str, negative_prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None, seed: int = -1) -> str:
         self._load_pipeline()
         
-        pipeline_kwargs = {}
+        generator = None
+        if seed != -1:
+            print(f"Using fixed seed for generation: {seed}")
+            generator = torch.Generator(device=self.pipe.device).manual_seed(seed)
+        else:
+            print("Using random seed for generation.")
+
+        pipeline_kwargs = {"generator": generator} if generator else {}
         ip_images_to_load = []
 
         if ip_adapter_image:
@@ -79,15 +125,10 @@ class JuggernautT2I(BaseT2I):
 
         if num_ip_images > 0:
             print(f"Juggernaut T2I: Activating IP-Adapter with {num_ip_images} character image(s).")
-
             if self._loaded_ip_adapter_count != num_ip_images:
                 print(f"Loading {num_ip_images} IP-Adapter(s) for the pipeline...")
-                
-                if hasattr(self.pipe, "unload_ip_adapter"):
-                    self.pipe.unload_ip_adapter()
-
+                if hasattr(self.pipe, "unload_ip_adapter"): self.pipe.unload_ip_adapter()
                 adapter_weights = [self.config.ip_adapter_weight_name] * num_ip_images
-                
                 self.pipe.load_ip_adapter(
                     self.config.ip_adapter_repo, 
                     subfolder=self.config.ip_adapter_subfolder, 
@@ -95,27 +136,25 @@ class JuggernautT2I(BaseT2I):
                 )
                 self._loaded_ip_adapter_count = num_ip_images
                 print(f"Successfully loaded {self._loaded_ip_adapter_count} adapters.")
-
-            # --- THE FIX IS HERE ---
-            # Create a list of scales, one for each adapter.
+            
             scales = [0.6] * num_ip_images
-            print(f"Setting IP-Adapter scales to: {scales}")
             self.pipe.set_ip_adapter_scale(scales) 
-
             ip_images = [load_image(p) for p in ip_images_to_load]
             pipeline_kwargs["ip_adapter_image"] = ip_images
         else:
-            print("Juggernaut T2I: No IP-Adapter image provided. Generating from text prompt only.")
+            print("Juggernaut T2I: No IP-Adapter image provided.")
             if self._loaded_ip_adapter_count > 0:
-                 if hasattr(self.pipe, "unload_ip_adapter"):
-                    self.pipe.unload_ip_adapter()
+                 if hasattr(self.pipe, "unload_ip_adapter"): self.pipe.unload_ip_adapter()
                  self._loaded_ip_adapter_count = 0
 
-        
-        print(f"Juggernaut generating image with resolution: {width}x{height} for prompt: '{prompt}'")
-        
+        enhanced_prompt = self.enhance_prompt(prompt)
+        print(f"Juggernaut generating image with resolution: {width}x{height}")
+        print(f"  - Prompt: '{enhanced_prompt}'")
+        print(f"  - Negative: '{negative_prompt}'")
+
         image = self.pipe(
-            prompt=prompt,
+            prompt=enhanced_prompt,
+            negative_prompt=negative_prompt,
             width=width,
             height=height,
             num_inference_steps=self.config.num_inference_steps,

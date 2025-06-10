@@ -255,9 +255,9 @@ class ProjectManager:
                 config_dict[key] = value
                 self._mark_final_for_reassembly() # If assembly setting changes, reassembly is needed
                 self._save_state()
-                print(f"Updated project config: set {key} to {value}")
+                logger.info(f"Updated project config: set {key} to {value}")
         else:
-            print(f"Warning: Attempted to update an unknown config key: {key}")
+            logger.warning(f"Warning: Attempted to update an unknown config key: {key}")
 
     def update_character(self, old_name: str, new_name: str, new_reference_image_path: Optional[str]):
         char = self.get_character(old_name)
@@ -287,12 +287,12 @@ class ProjectManager:
         char_dir = os.path.join(self.output_dir, "characters", safe_name)
         if os.path.exists(char_dir):
             shutil.rmtree(char_dir)
-            print(f"Removed character asset directory: {char_dir}")
+            logger.info(f"Removed character asset directory: {char_dir}")
 
         self._save_state()
         
     def _reset_visuals_for_character(self, character_name: str):
-        print(f"Resetting visuals for scenes containing character: {character_name}")
+        logger.info(f"Resetting visuals for scenes containing character: {character_name}")
         for scene in self.state.scenes:
             if character_name in scene.character_names:
                 for chunk in scene.chunks:
@@ -320,7 +320,7 @@ class ProjectManager:
 
     def add_new_scene_at(self, scene_idx: int, narration_text: str = "New scene narration.", visual_prompt: str = "A vibrant new scene."):
         if not self.state: return
-        print(f"Adding new scene at index {scene_idx}")
+        logger.info(f"Adding new scene at index {scene_idx}")
 
         new_narration = NarrationPart(text=narration_text)
         new_visual = VisualPrompt(prompt=visual_prompt)
@@ -342,20 +342,23 @@ class ProjectManager:
         
         scene_to_reset = self.get_scene_info(scene_idx)
         if not scene_to_reset:
-            print(f"No scene found at index {scene_idx} to reset.")
+            logger.warning(f"No scene found at index {scene_idx} to reset.")
             return
 
-        print(f"Resetting Scene {scene_idx} for chunk regeneration.")
+        logger.info(f"Resetting Scene {scene_idx} for chunk regeneration.")
         # Delete physical assets associated with the scene's chunks
         for chunk in scene_to_reset.chunks:
             if chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path):
-                os.remove(chunk.keyframe_image_path)
+                try: os.remove(chunk.keyframe_image_path)
+                except OSError as e: logger.error(f"Error removing keyframe image {chunk.keyframe_image_path}: {e}")
             if chunk.video_path and os.path.exists(chunk.video_path):
-                os.remove(chunk.video_path)
+                try: os.remove(chunk.video_path)
+                except OSError as e: logger.error(f"Error removing chunk video {chunk.video_path}: {e}")
         
         # Delete the assembled scene video if it exists
         if scene_to_reset.assembled_video_path and os.path.exists(scene_to_reset.assembled_video_path):
-            os.remove(scene_to_reset.assembled_video_path)
+            try: os.remove(scene_to_reset.assembled_video_path)
+            except OSError as e: logger.error(f"Error removing assembled scene video {scene_to_reset.assembled_video_path}: {e}")
 
         # Remove the Scene object from the state
         self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
@@ -367,7 +370,7 @@ class ProjectManager:
 
     def remove_scene_at(self, scene_idx: int):
         if not self.state or scene_idx >= len(self.state.script.narration_parts): return
-        print(f"Removing scene at index {scene_idx}")
+        logger.info(f"Removing scene at index {scene_idx}")
 
         del self.state.script.narration_parts[scene_idx]
         del self.state.script.visual_prompts[scene_idx]

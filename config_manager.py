@@ -16,7 +16,9 @@ class ContentConfig(BaseModel):
     max_scenes: int = 5
     aspect_ratio_format: Literal["Portrait", "Landscape"] = "Landscape"
     use_svd_flow: bool = True
-    add_narration_text_to_video: bool = True # <--- NEW
+    add_narration_text_to_video: bool = True
+    seed: int = -1 # <--- NEW: -1 means random seed
+
     # --- NEW: To be filled from UI selections ---
     module_selections: Dict[str, str] = Field(default_factory=dict)
     language: str = "en"

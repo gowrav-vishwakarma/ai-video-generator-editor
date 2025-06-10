@@ -183,6 +183,7 @@ class ZephyrLLM(BaseLLM):
             try to describe the visual prompt in minimum words but in very specific details what a director would want  the image to look like.
             Descrive character, subject and envrionment in words, only chose important words no need to make complete sentances.
             Also descirbe camera mm, shot type, location, lighting, color, mood, etc.
+            Do not include any other text or comments other then given json format.
             """
             messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
             

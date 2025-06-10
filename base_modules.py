@@ -118,20 +118,20 @@ class BaseVideoGen(ABC):
 class BaseT2I(BaseVideoGen):
     """Abstract Base Class for Text-to-Image modules."""
     @abstractmethod
-    def generate_image(self, prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str: # <-- MODIFIED SIGNATURE
+    def generate_image(self, prompt: str, negative_prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None, seed: int = -1) -> str:
         """Generates an image from a text prompt, optionally using an IP-Adapter image."""
         pass
 
 class BaseI2V(BaseVideoGen):
     """Abstract Base Class for Image-to-Video modules."""
     @abstractmethod
-    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str], ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str: # <-- MODIFIED SIGNATURE
+    def generate_video_from_image(self, image_path: str, output_video_path: str, target_duration: float, content_config: ContentConfig, visual_prompt: str, motion_prompt: Optional[str], ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         """Generates a video from an initial image, optionally using an IP-Adapter image for style/subject."""
         pass
 
 class BaseT2V(BaseVideoGen):
     """Abstract Base Class for Text-to-Video modules."""
     @abstractmethod
-    def generate_video_from_text(self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str: # <-- MODIFIED SIGNATURE
+    def generate_video_from_text(self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
         """Generates a video directly from a text prompt, optionally using an IP-Adapter image."""
         pass

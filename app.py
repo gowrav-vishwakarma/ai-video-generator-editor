@@ -50,7 +50,6 @@ def load_project(project_name):
         st.session_state.is_processing = False
         speaker_relative_path = project_manager.state.project_info.speaker_audio_path
         if speaker_relative_path:
-            # Construct the full, absolute path for the TTS module
             full_speaker_path = os.path.join(project_manager.output_dir, speaker_relative_path)
             if os.path.exists(full_speaker_path):
                 st.session_state.speaker_audio = full_speaker_path
@@ -64,7 +63,7 @@ def load_project(project_name):
         st.error("Failed to load project.")
 
 
-def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_selections, language, add_narration_text):
+def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_selections, language, add_narration_text, seed):
     name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{name}_{int(time.time())}"
     
@@ -77,7 +76,8 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
         use_svd_flow=use_svd,
         module_selections=module_selections,
         language=language,
-        add_narration_text_to_video=add_narration_text
+        add_narration_text_to_video=add_narration_text,
+        seed=seed
     )
     pm = ProjectManager(output_dir)
     pm.initialize_project(topic, cfg)
@@ -100,14 +100,10 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
     st.session_state.ui_executor = UITaskExecutor(pm)
     st.session_state.auto_mode = auto
     if audio:
-        # We will save a relative path to make the project folder more portable
         relative_speaker_path = "speaker_audio.wav"
         full_speaker_path = os.path.join(output_dir, relative_speaker_path)
         with open(full_speaker_path, "wb") as f: f.write(audio.getbuffer())
-        
-        # Save the full path to session state for the current run
         st.session_state.speaker_audio = full_speaker_path
-        # Save the relative path to the project's permanent state
         pm.set_speaker_audio(relative_speaker_path)
         
     with st.spinner("Generating script..."):
@@ -122,9 +118,7 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
         st.error("Failed to generate script.")
         st.session_state.current_project = None
 
-# --- NEW: Callback function to handle flow changes ---
 def handle_flow_change():
-    """Clears character list when flow changes, as compatibility rules change."""
     st.session_state.new_project_characters = []
 
 def render_project_selection():
@@ -137,15 +131,9 @@ def render_project_selection():
                 return mod['caps']
         return None
         
-    # --- NEW: Helper function to format dropdown options ---
     def format_module_option(mod_type: str, path: str) -> str:
-        """Gets the display title for a module from its path."""
         caps = get_caps_from_path(mod_type, path)
-        if caps and caps.title:
-            return caps.title
-        # Fallback to class name if title is not available
-        return path.split('.')[-1] if path else "Not Selected"
-
+        return caps.title if caps and caps.title else (path.split('.')[-1] if path else "Not Selected")
 
     c1, c2 = st.columns([1.2, 2])
     
@@ -159,32 +147,15 @@ def render_project_selection():
     
     with c1:
         st.subheader("Create New Project")
-        
         st.info("Step 1: Choose your workflow and AI models.")
-        st.radio(
-            "Generation Flow",
-            ("Image to Video (High Quality)", "Text to Video (Fast)"),
-            horizontal=True,
-            key="flow_choice",
-            on_change=handle_flow_change
-        )
+        st.radio("Generation Flow", ("Image to Video (High Quality)", "Text to Video (Fast)"), horizontal=True, key="flow_choice", on_change=handle_flow_change)
         use_svd = st.session_state.flow_choice == "Image to Video (High Quality)"
 
-        # The TTS selection needs to be outside the form so its on_change can work.
         tts_options = st.session_state.discovered_modules.get('tts', [])
         tts_paths = [m['path'] for m in tts_options]
-        
-        st.selectbox(
-            "Text-to-Speech Model", 
-            options=tts_paths, 
-            # --- MODIFIED: Use the new formatter ---
-            format_func=lambda path: format_module_option('tts', path),
-            key="selected_tts_module",
-            on_change=lambda: st.session_state.update() 
-        )
+        st.selectbox("Text-to-Speech Model", options=tts_paths, format_func=lambda path: format_module_option('tts', path), key="selected_tts_module", on_change=lambda: st.session_state.update())
 
         selected_tts_caps = get_caps_from_path('tts', st.session_state.get('selected_tts_module'))
-        
         language = "en"
         if selected_tts_caps and selected_tts_caps.supported_tts_languages:
             supported_langs = selected_tts_caps.supported_tts_languages
@@ -194,68 +165,39 @@ def render_project_selection():
 
         with st.form("new_project_form"):
             has_characters = len(st.session_state.new_project_characters) > 0
-            module_selections = {}
-
-            module_selections['tts'] = st.session_state.get('selected_tts_module')
-            
-            # --- MODIFIED: Use the new formatter for all module selectors ---
+            module_selections = {'tts': st.session_state.get('selected_tts_module')}
             llm_options = st.session_state.discovered_modules.get('llm', [])
-            module_selections['llm'] = st.selectbox("Language Model (LLM)", 
-                                                    options=[m['path'] for m in llm_options], 
-                                                    format_func=lambda path: format_module_option('llm', path))
+            module_selections['llm'] = st.selectbox("Language Model (LLM)", options=[m['path'] for m in llm_options], format_func=lambda path: format_module_option('llm', path))
             
             show_char_section = False
-            if use_svd:
-                t2i_options = st.session_state.discovered_modules.get('t2i', [])
-                if has_characters:
-                    t2i_options = [m for m in t2i_options if m['caps'].supports_ip_adapter]
-
-                if not t2i_options and has_characters:
-                    st.error("No compatible Image Models (T2I) found for projects with characters.")
-                    module_selections['t2i'] = None
-                else:
-                    module_selections['t2i'] = st.selectbox("Image Model (T2I)", 
-                                                            options=[m['path'] for m in t2i_options], 
-                                                            format_func=lambda path: format_module_option('t2i', path))
-                
-                i2v_options = st.session_state.discovered_modules.get('i2v', [])
-                module_selections['i2v'] = st.selectbox("Image-to-Video Model (I2V)", 
-                                                        options=[m['path'] for m in i2v_options], 
-                                                        format_func=lambda path: format_module_option('i2v', path))
-                module_selections['t2v'] = st.session_state.discovered_modules.get('t2v', [{}])[0].get('path', None)
-                
-                t2i_caps = get_caps_from_path('t2i', module_selections.get('t2i'))
-                if t2i_caps and t2i_caps.supports_ip_adapter:
-                    show_char_section = True
-                elif t2i_caps:
-                    st.warning("This Image Model does not support characters.", icon="⚠️")
             
-            else: # Text to Video Flow
-                t2v_options = st.session_state.discovered_modules.get('t2v', [])
-                if has_characters:
-                    t2v_options = [m for m in t2v_options if m['caps'].supports_ip_adapter]
-
-                if not t2v_options and has_characters:
-                    st.error("No compatible Text-to-Video models found for projects with characters.")
-                    module_selections['t2v'] = None
-                else:
-                    module_selections['t2v'] = st.selectbox("Text-to-Video Model (T2V)", 
-                                                            options=[m['path'] for m in t2v_options], 
-                                                            format_func=lambda path: format_module_option('t2v', path))
-
-                module_selections['t2i'] = st.session_state.discovered_modules.get('t2i', [{}])[0].get('path', None)
-                module_selections['i2v'] = st.session_state.discovered_modules.get('i2v', [{}])[0].get('path', None)
-                
-                t2v_caps = get_caps_from_path('t2v', module_selections.get('t2v'))
-                if t2v_caps and t2v_caps.supports_ip_adapter:
-                    show_char_section = True
-                elif t2v_caps:
-                    st.warning("This Text-to-Video model does not support characters.", icon="⚠️")
-
+            # --- START OF FIX: Simplified and corrected module selection and character section logic ---
+            selected_video_model_path = None
+            if use_svd:
+                t2i_options = [m for m in st.session_state.discovered_modules.get('t2i', []) if not has_characters or m['caps'].supports_ip_adapter]
+                module_selections['t2i'] = st.selectbox("Image Model (T2I)", options=[m['path'] for m in t2i_options], format_func=lambda path: format_module_option('t2i', path), key="t2i_selection")
+                i2v_options = st.session_state.discovered_modules.get('i2v', [])
+                module_selections['i2v'] = st.selectbox("Image-to-Video Model (I2V)", options=[m['path'] for m in i2v_options], format_func=lambda path: format_module_option('i2v', path))
+                selected_video_model_path = module_selections.get('t2i')
+                # Determine character support based on the selected T2I model
+                if selected_video_model_path:
+                    selected_caps = get_caps_from_path('t2i', selected_video_model_path)
+                    if selected_caps and selected_caps.supports_ip_adapter:
+                        show_char_section = True
+            else: # T2V Flow
+                t2v_options = [m for m in st.session_state.discovered_modules.get('t2v', []) if not has_characters or m['caps'].supports_ip_adapter]
+                module_selections['t2v'] = st.selectbox("Text-to-Video Model (T2V)", options=[m['path'] for m in t2v_options], format_func=lambda path: format_module_option('t2v', path), key="t2v_selection")
+                selected_video_model_path = module_selections.get('t2v')
+                # Determine character support based on the selected T2V model
+                if selected_video_model_path:
+                    selected_caps = get_caps_from_path('t2v', selected_video_model_path)
+                    if selected_caps and selected_caps.supports_ip_adapter:
+                        show_char_section = True
+            # --- END OF FIX ---
+            
             st.divider()
             st.info("Step 2: Define your project topic and content.")
             topic = st.text_area("Video Topic")
-            
             col1, col2 = st.columns(2)
             fmt = col1.selectbox("Format", ("Portrait", "Landscape"), index=1)
             length = col2.number_input("Length (s)", min_value=5, value=20, step=5)
@@ -264,22 +206,25 @@ def render_project_selection():
             max_s = c2_s.number_input("Max Scenes", min_s, 10, 5, 1)
             
             st.divider()
-            st.info("Step 3: Final Touches") # Changed header for clarity
+            st.info("Step 3: Final Touches")
+            seed = st.number_input("Image Generation Seed", min_value=-1, value=-1, step=1, help="-1 for a random seed, or any other number for a fixed seed.")
             auto = st.checkbox("Automatic Mode", value=True)
             audio = st.file_uploader("Reference Speaker Audio (Optional, .wav)", type=['wav'])
             add_narration_text = st.checkbox("Add Narration Text to Video", value=True, help="Renders the narration text as captions on the final video.")
 
             submitted = st.form_submit_button("Create & Start Project", type="primary")
             if submitted:
-                final_language = st.session_state.get('selected_language', 'en') 
+                final_language = st.session_state.get('selected_language', 'en')
+                flow_is_valid = (use_svd and module_selections.get('t2i') and module_selections.get('i2v')) or \
+                                (not use_svd and module_selections.get('t2v'))
 
-                if not all(module_selections.values()):
-                    st.error("A required module is missing or could not be selected. Please check your selections.")
+                if not flow_is_valid or not module_selections.get('llm') or not module_selections.get('tts'):
+                    st.error("A required module for the selected workflow is missing. Please check your selections.")
                 elif not topic: 
                     st.error("Topic required.")
                 else:
                     final_chars = st.session_state.new_project_characters if show_char_section else []
-                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections, final_language, add_narration_text)
+                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections, final_language, add_narration_text, seed)
         
         st.divider()
         st.subheader("Add Characters (Optional)")
@@ -291,37 +236,29 @@ def render_project_selection():
                     corrected_image = load_and_correct_image_orientation(char['image'])
                     if corrected_image: char_c1.image(corrected_image, width=64)
                     char_c2.write(f"**{char['name']}**")
-            
             with st.expander("Add a New Character"):
                 with st.form("add_character_form", clear_on_submit=True):
                     char_name = st.text_input("Character Name")
                     char_image = st.file_uploader("Upload Character Image", type=['png', 'jpg', 'jpeg'])
-                    
                     if st.form_submit_button("Add Character to Project"):
                         if char_name and char_image:
                             st.session_state.new_project_characters.append({"name": char_name, "image": char_image})
                             st.rerun()
-                        else:
-                            st.warning("Character name and image are required.")
+                        else: st.warning("Character name and image are required.")
         else:
-            st.info("The selected model workflow does not support character consistency. Please select a different model above to enable this feature.")
-            if st.session_state.new_project_characters:
-                st.session_state.new_project_characters = []
+            st.info("The selected model workflow does not support character consistency.")
+            if st.session_state.new_project_characters: st.session_state.new_project_characters = []
 
-
+# --- render_processing_dashboard and render_video_assembly have no changes ---
 def render_processing_dashboard():
     project = st.session_state.current_project
     ui_executor = st.session_state.ui_executor
 
-    def add_scene_at_callback(index_to_add):
-        st.session_state.ui_executor.add_new_scene(index_to_add)
-
-    def remove_scene_callback(scene_idx_to_remove):
-        st.session_state.ui_executor.remove_scene(scene_idx_to_remove)
-    
-    # --- NEW: Callback for regenerating chunks ---
+    def add_scene_at_callback(index_to_add): st.session_state.ui_executor.add_new_scene(index_to_add)
+    def remove_scene_callback(scene_idx_to_remove): st.session_state.ui_executor.remove_scene(scene_idx_to_remove)
+    # --- NEW: Callback for the new "Regen Chunks" button ---
     def regen_chunks_callback(scene_idx_to_regen):
-        with st.spinner(f"Regenerating chunks for Scene {scene_idx_to_regen + 1}..."):
+        with st.spinner(f"Regenerating chunks for Scene {scene_idx_to_regen + 1}..."): 
             st.session_state.ui_executor.regenerate_scene_chunks(scene_idx_to_regen)
         st.rerun()
 
@@ -329,6 +266,43 @@ def render_processing_dashboard():
     use_svd_flow = project.state.project_info.config.get("use_svd_flow", True)
 
     st.title(f"🎬 Project: {project.state.project_info.topic}")
+    # --- START OF NEW "INFO CHIPS" SECTION ---
+    with st.container(border=True):
+        def get_module_title(mod_type: str, path: str) -> str:
+            if not path: return "N/A"
+            for mod in st.session_state.discovered_modules.get(mod_type, []):
+                if mod['path'] == path:
+                    return mod['caps'].title
+            return path.split('.')[-1]
+
+        config_dict = project.state.project_info.config
+        modules = config_dict.get('module_selections', {})
+        
+        c1, c2, c3 = st.columns(3)
+        
+        with c1:
+            st.caption("Project Settings")
+            flow = "Image-to-Video" if config_dict.get('use_svd_flow', True) else "Text-to-Video"
+            fmt = config_dict.get('aspect_ratio_format', 'N/A')
+            length = config_dict.get('target_video_length_hint', 'N/A')
+            st.markdown(f"**Flow:** {flow}<br>**Format:** {fmt}<br>**Length:** {length}s", unsafe_allow_html=True)
+            
+        with c2:
+            st.caption("Core Models")
+            llm_title = get_module_title('llm', modules.get('llm'))
+            tts_title = get_module_title('tts', modules.get('tts'))
+            st.markdown(f"**LLM:** {llm_title}<br>**TTS:** {tts_title}", unsafe_allow_html=True)
+
+        with c3:
+            st.caption("Video Generation Models")
+            if config_dict.get('use_svd_flow', True):
+                t2i_title = get_module_title('t2i', modules.get('t2i'))
+                i2v_title = get_module_title('i2v', modules.get('i2v'))
+                st.markdown(f"**Image:** {t2i_title}<br>**Video:** {i2v_title}", unsafe_allow_html=True)
+            else:
+                t2v_title = get_module_title('t2v', modules.get('t2v'))
+                st.markdown(f"**Video:** {t2v_title}")
+    # --- END OF NEW "INFO CHIPS" SECTION ---
     c1, c2, c3 = st.columns([2, 3, 2])
     with c1:
         if st.button("⬅️ Back to Projects"): go_to_step('project_selection')
@@ -343,14 +317,9 @@ def render_processing_dashboard():
 
     if supports_characters:
         expander_label = "👤 Project Characters & Subjects"
-        if project.state.characters:
-            char_names = ", ".join([c.name for c in project.state.characters])
-            expander_label = f"👤 Project Characters & Subjects: {char_names}"
-
+        if project.state.characters: expander_label = f"👤 Project Characters & Subjects: {', '.join([c.name for c in project.state.characters])}"
         with st.expander(expander_label, expanded=False):
-            if not project.state.characters:
-                st.info("No characters defined. Add one to use features like IP-Adapter for consistency.")
-            
+            if not project.state.characters: st.info("No characters defined.")
             for char in project.state.characters:
                 with st.container(border=True):
                     c1_char, c2_char = st.columns([1, 3])
@@ -363,33 +332,37 @@ def render_processing_dashboard():
                                 st.write(f"Editing: **{char.name}**")
                                 new_name = st.text_input("New Name", value=char.name)
                                 new_image = st.file_uploader("Upload New Image", type=['png', 'jpg', 'jpeg'], key=f"edit_img_{char.name}")
-                                if st.form_submit_button("Save", type="primary"):
-                                    ui_executor.update_character(char.name, new_name, new_image)
-                        if st.button("Delete Character", key=f"del_char_{char.name}", type="secondary", use_container_width=True):
-                            ui_executor.delete_character(char.name)
-
+                                if st.form_submit_button("Save", type="primary"): ui_executor.update_character(char.name, new_name, new_image)
+                        if st.button("Delete Character", key=f"del_char_{char.name}", type="secondary", use_container_width=True): ui_executor.delete_character(char.name)
             with st.form("add_new_character_dashboard"):
                 st.subheader("Add New Character")
                 name = st.text_input("Character Name")
                 image = st.file_uploader("Upload Reference Image", type=['png', 'jpg', 'jpeg'])
                 if st.form_submit_button("Add Character", type="primary"):
-                    if name and image:
-                        ui_executor.add_character(name, image)
+                    if name and image: ui_executor.add_character(name, image)
                     else: st.error("Name and image are required.")
     else:
-        st.info("This project's workflow and selected models do not support character consistency (IP-Adapter).")
+        st.info("This project's workflow does not support character consistency.")
 
     st.subheader("Content Generation Dashboard")
 
     with st.expander("Assembly & Export Settings"):
-        current_setting = project.state.project_info.config.get('add_narration_text_to_video', True)
-        new_setting = st.checkbox(
-            "Add Narration Text to Video", 
-            value=current_setting,
-            help="Render the narration script as captions on the final video. Changing this will require a re-assembly."
-        )
-        if new_setting != current_setting:
-            ui_executor.update_project_config('add_narration_text_to_video', new_setting)
+        # --- START OF FIX: Read config directly from project manager state ---
+        # This ensures the UI reflects the *actual* state that will be used.
+        cfg = ContentConfig(**project.state.project_info.config)
+        
+        c1, c2 = st.columns(2)
+        current_text_setting = cfg.add_narration_text_to_video
+        new_text_setting = c1.checkbox("Add Narration Text to Video", value=current_text_setting, help="Render the narration as captions. Requires re-assembly.")
+        if new_text_setting != current_text_setting:
+            ui_executor.update_project_config('add_narration_text_to_video', new_text_setting)
+
+        current_seed = cfg.seed
+        new_seed = c2.number_input("Image Seed", value=current_seed, min_value=-1, step=1, help="-1 for random. Changing this requires re-generating images.")
+        if new_seed != current_seed:
+            ui_executor.update_project_config('seed', new_seed)
+        # --- END OF FIX ---
+
 
     with st.expander("Reference Speaker Audio"):
         uploaded_file = st.file_uploader("Upload New Speaker Audio (.wav)", key="speaker_upload", disabled=st.session_state.is_processing)
@@ -413,7 +386,7 @@ def render_processing_dashboard():
     if is_ready_for_assembly or is_fully_complete:
         if st.button("Assemble / View Final Video ➡️", type="primary"):
             if is_ready_for_assembly:
-                with st.spinner("Assembling final video with latest settings..."):
+                with st.spinner("Assembling final video..."):
                     success = ui_executor.assemble_final_video()
                     if success: go_to_step('video_assembly')
             else:
@@ -428,18 +401,15 @@ def render_processing_dashboard():
     for i, part in enumerate(project.state.script.narration_parts):
         with st.container(border=True):
             header_c1, header_c2 = st.columns([0.9, 0.1])
-            with header_c1:
-                st.header(f"Scene {i+1}")
-            with header_c2:
-                st.button("❌", key=f"delete_scene_{i}", help="Delete this scene", disabled=st.session_state.is_processing, on_click=remove_scene_callback, args=(i,))
+            with header_c1: st.header(f"Scene {i+1}")
+            with header_c2: st.button("❌", key=f"delete_scene_{i}", help="Delete this scene", disabled=st.session_state.is_processing, on_click=remove_scene_callback, args=(i,))
             
             if supports_characters:
                 scene = project.get_scene_info(i)
                 if scene and project.state.characters:
                     all_char_names = [c.name for c in project.state.characters]
-                    selected_chars = st.multiselect("Characters in this Scene", options=all_char_names, default=scene.character_names, key=f"scene_chars_{i}", help="Select characters to feature. This will use their reference image for generation.")
-                    if selected_chars != scene.character_names:
-                        ui_executor.update_scene_characters(i, selected_chars)
+                    selected_chars = st.multiselect("Characters in this Scene", options=all_char_names, default=scene.character_names, key=f"scene_chars_{i}")
+                    if selected_chars != scene.character_names: ui_executor.update_scene_characters(i, selected_chars)
             
             st.subheader("Narration")
             new_text = st.text_area("Script", part.text, key=f"text_{i}", height=100, label_visibility="collapsed", disabled=st.session_state.is_processing)
@@ -459,10 +429,9 @@ def render_processing_dashboard():
             scene = project.get_scene_info(i)
             if scene:
                 chunks_header_c1, chunks_header_c2 = st.columns([0.75, 0.25])
-                with chunks_header_c1:
-                    st.subheader("Visual Chunks")
-                with chunks_header_c2:
-                    st.button("Regen Chunks", key=f"regen_chunks_{i}", on_click=regen_chunks_callback, args=(i,), disabled=st.session_state.is_processing, use_container_width=True, help="Regenerate all visual/motion prompts for this scene.")
+                with chunks_header_c1: st.subheader("Visual Chunks")
+                # --- NEW: Added the Regen Chunks button ---
+                with chunks_header_c2: st.button("Regen Chunks", key=f"regen_chunks_{i}", on_click=regen_chunks_callback, args=(i,), disabled=st.session_state.is_processing, use_container_width=True, help="Regenerate all visual and motion prompts for this scene.")
                 
                 for chunk in scene.chunks:
                     chunk_idx = chunk.chunk_idx
@@ -479,15 +448,13 @@ def render_processing_dashboard():
                                 st.write("**Image**"); has_image = chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path)
                                 if has_image: st.image(chunk.keyframe_image_path)
                                 else: st.info("Image pending...")
-                                btn_txt = "Regen Image" if has_image else "Gen Image"
-                                if st.button(btn_txt, key=f"gen_img_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
+                                if st.button("Regen Image" if has_image else "Gen Image", key=f"gen_img_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
                                     with st.spinner("..."): ui_executor.regenerate_chunk_image(i, chunk_idx); st.rerun()
                             with v_col:
                                 st.write("**Video**"); has_video = chunk.video_path and os.path.exists(chunk.video_path)
                                 if has_video: st.video(chunk.video_path)
                                 else: st.info("Video pending...")
-                                btn_txt = "Regen Video" if has_video else "Gen Video"
-                                if st.button(btn_txt, key=f"gen_vid_{i}_{chunk_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
+                                if st.button("Regen Video" if has_video else "Gen Video", key=f"gen_vid_{i}_{chunk_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
                                     with st.spinner("..."): ui_executor.regenerate_chunk_video(i, chunk_idx); st.rerun()
                         else: # T2V Flow
                             p_col, v_col = st.columns([2, 1])
@@ -499,11 +466,11 @@ def render_processing_dashboard():
                                 st.write("**Video**"); has_video = chunk.video_path and os.path.exists(chunk.video_path)
                                 if has_video: st.video(chunk.video_path)
                                 else: st.info("Video pending...")
-                                btn_txt = "Regen Video" if has_video else "Gen Video"
-                                if st.button(btn_txt, key=f"gen_t2v_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
+                                if st.button("Regen Video" if has_video else "Gen Video", key=f"gen_t2v_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
                                     with st.spinner("..."): ui_executor.regenerate_chunk_t2v(i, chunk_idx); st.rerun()
             elif part.status == "generated":
-                 if st.button("Create Scene", key=f"create_scene_{i}", disabled=st.session_state.is_processing, use_container_width=True):
+                 # --- THIS IS THE FIX: Changed the button label for clarity ---
+                 if st.button("Define Visual Chunks", key=f"create_scene_{i}", disabled=st.session_state.is_processing, use_container_width=True, help="Generates the visual and motion prompts for this scene based on its narration."):
                     with st.spinner("..."): ui_executor.create_scene(i); st.rerun()
             else: st.info("Generate audio before scene creation.")
         
@@ -518,7 +485,7 @@ def render_processing_dashboard():
             st.session_state.is_processing = False; st.toast("✅ All tasks done!"); go_to_step('video_assembly')
         else:
             msg = f"Executing: {next_task_name.replace('_', ' ')} for Scene {next_task_data.get('scene_idx', 0) + 1}..."
-            if "chunk" in next_task_name: msg = f"Executing: {next_task_name.replace('_', ' ')} for Scene {next_task_data.get('scene_idx', 0) + 1} / Chunk {next_task_data.get('chunk_idx', 0) + 1}..."
+            if "chunk" in next_task_name: msg += f" / Chunk {next_task_data.get('chunk_idx', 0) + 1}"
             with st.spinner(msg):
                 if next_task_name == 'generate_audio': next_task_data['speaker_wav'] = st.session_state.speaker_audio
                 success = st.session_state.ui_executor.task_executor.execute_task(next_task_name, next_task_data)
@@ -529,7 +496,6 @@ def render_processing_dashboard():
                 st.rerun()
             else:
                 st.error(f"❌ Failed on: {next_task_name}. Stopping."); st.session_state.is_processing = False
-
 
 def render_video_assembly():
     st.title("Final Video Assembly")
@@ -560,8 +526,6 @@ def render_video_assembly():
         else:
             st.error("Failed.")
 
-
-# Main App Router
 if st.session_state.current_step == 'project_selection': render_project_selection()
 elif st.session_state.current_project:
     if st.session_state.current_step == 'processing_dashboard': render_processing_dashboard()

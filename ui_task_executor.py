@@ -47,8 +47,8 @@ class UITaskExecutor:
     def create_scene(self, scene_idx: int) -> bool:
         if not self.task_executor: return False
         success = self.task_executor.execute_task("create_scene", {"scene_idx": scene_idx})
-        if success: st.toast(f"Scene {scene_idx + 1} created!", icon="🎬")
-        else: st.error(f"Failed to create Scene {scene_idx + 1}.")
+        if success: st.toast(f"Scene {scene_idx + 1} chunks created!", icon="🎬")
+        else: st.error(f"Failed to create chunks for Scene {scene_idx + 1}.")
         self.project_manager.load_project()
         return success
 

@@ -37,17 +37,17 @@ The pipeline follows a state-driven, sequential process. The `ProjectManager` tr
 graph TD
     A[Start: Create New Project in UI] --> B{Select Models & Workflow};
     B --> C[Provide Topic & Settings];
-    C --> D{Project Initialized (project.json)};
-    D --> E[Task: Generate Script (LLM)];
-    E --> F[Task: Generate Audio (TTS)];
-    F --> G[Task: Create Scene Chunks (LLM)];
+    C --> D[Project Initialized - project.json];
+    D --> E[Task: Generate Script LLM];
+    E --> F[Task: Generate Audio TTS];
+    F --> G[Task: Create Scene Chunks - LLM];
 
     subgraph "For Each Scene Chunk"
         direction LR
         G --> H{I2V or T2V Flow?};
-        H -- I2V --> I[Task: Gen Image (T2I)];
-        I --> J[Task: Gen Video (I2V)];
-        H -- T2V --> K[Task: Gen Video (T2V)];
+        H -- I2V --> I[Task: Gen Image T2I];
+        I --> J[Task: Gen Video I2V];
+        H -- T2V --> K[Task: Gen Video T2V];
     end
 
     J --> L[All Chunks Done?];
@@ -57,6 +57,7 @@ graph TD
     M --> N[All Scenes Done?];
     N -- Yes --> O[Task: Assemble Final Reel];
     O --> P[✅ Final Video Complete];
+
 
 ```
 

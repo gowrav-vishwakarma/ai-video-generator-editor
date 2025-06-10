@@ -414,22 +414,29 @@ def render_project_selection():
             module_selections['llm'] = st.selectbox("Language Model (LLM)", options=[m['path'] for m in llm_options], format_func=lambda path: format_module_option('llm', path))
             
             show_char_section = False
-            # --- START OF FIX ---
+            
+            # --- START OF FIX: Simplified and corrected module selection and character section logic ---
+            selected_video_model_path = None
             if use_svd:
                 t2i_options = [m for m in st.session_state.discovered_modules.get('t2i', []) if not has_characters or m['caps'].supports_ip_adapter]
-                module_selections['t2i'] = st.selectbox("Image Model (T2I)", options=[m['path'] for m in t2i_options], format_func=lambda path: format_module_option('t2i', path))
+                module_selections['t2i'] = st.selectbox("Image Model (T2I)", options=[m['path'] for m in t2i_options], format_func=lambda path: format_module_option('t2i', path), key="t2i_selection")
                 i2v_options = st.session_state.discovered_modules.get('i2v', [])
                 module_selections['i2v'] = st.selectbox("Image-to-Video Model (I2V)", options=[m['path'] for m in i2v_options], format_func=lambda path: format_module_option('i2v', path))
-                # REMOVED: module_selections['t2v'] = None
-                t2i_caps = get_caps_from_path('t2i', module_selections.get('t2i'))
-                if t2i_caps and t2i_caps.supports_ip_adapter: show_char_section = True
+                selected_video_model_path = module_selections.get('t2i')
+                # Determine character support based on the selected T2I model
+                if selected_video_model_path:
+                    selected_caps = get_caps_from_path('t2i', selected_video_model_path)
+                    if selected_caps and selected_caps.supports_ip_adapter:
+                        show_char_section = True
             else: # T2V Flow
                 t2v_options = [m for m in st.session_state.discovered_modules.get('t2v', []) if not has_characters or m['caps'].supports_ip_adapter]
-                module_selections['t2v'] = st.selectbox("Text-to-Video Model (T2V)", options=[m['path'] for m in t2v_options], format_func=lambda path: format_module_option('t2v', path))
-                # REMOVED: module_selections['t2i'] = None
-                # REMOVED: module_selections['i2v'] = None
-                t2v_caps = get_caps_from_path('t2v', module_selections.get('t2v'))
-                if t2v_caps and t2v_caps.supports_ip_adapter: show_char_section = True
+                module_selections['t2v'] = st.selectbox("Text-to-Video Model (T2V)", options=[m['path'] for m in t2v_options], format_func=lambda path: format_module_option('t2v', path), key="t2v_selection")
+                selected_video_model_path = module_selections.get('t2v')
+                # Determine character support based on the selected T2V model
+                if selected_video_model_path:
+                    selected_caps = get_caps_from_path('t2v', selected_video_model_path)
+                    if selected_caps and selected_caps.supports_ip_adapter:
+                        show_char_section = True
             # --- END OF FIX ---
             
             st.divider()
@@ -493,14 +500,53 @@ def render_processing_dashboard():
 
     def add_scene_at_callback(index_to_add): st.session_state.ui_executor.add_new_scene(index_to_add)
     def remove_scene_callback(scene_idx_to_remove): st.session_state.ui_executor.remove_scene(scene_idx_to_remove)
+    # --- NEW: Callback for the new "Regen Chunks" button ---
     def regen_chunks_callback(scene_idx_to_regen):
-        with st.spinner(f"Regenerating chunks for Scene {scene_idx_to_regen + 1}..."): st.session_state.ui_executor.regenerate_scene_chunks(scene_idx_to_regen)
+        with st.spinner(f"Regenerating chunks for Scene {scene_idx_to_regen + 1}..."): 
+            st.session_state.ui_executor.regenerate_scene_chunks(scene_idx_to_regen)
         st.rerun()
 
     supports_characters = ui_executor.task_executor.active_flow_supports_characters
     use_svd_flow = project.state.project_info.config.get("use_svd_flow", True)
 
     st.title(f"🎬 Project: {project.state.project_info.topic}")
+    # --- START OF NEW "INFO CHIPS" SECTION ---
+    with st.container(border=True):
+        def get_module_title(mod_type: str, path: str) -> str:
+            if not path: return "N/A"
+            for mod in st.session_state.discovered_modules.get(mod_type, []):
+                if mod['path'] == path:
+                    return mod['caps'].title
+            return path.split('.')[-1]
+
+        config_dict = project.state.project_info.config
+        modules = config_dict.get('module_selections', {})
+        
+        c1, c2, c3 = st.columns(3)
+        
+        with c1:
+            st.caption("Project Settings")
+            flow = "Image-to-Video" if config_dict.get('use_svd_flow', True) else "Text-to-Video"
+            fmt = config_dict.get('aspect_ratio_format', 'N/A')
+            length = config_dict.get('target_video_length_hint', 'N/A')
+            st.markdown(f"**Flow:** {flow}<br>**Format:** {fmt}<br>**Length:** {length}s", unsafe_allow_html=True)
+            
+        with c2:
+            st.caption("Core Models")
+            llm_title = get_module_title('llm', modules.get('llm'))
+            tts_title = get_module_title('tts', modules.get('tts'))
+            st.markdown(f"**LLM:** {llm_title}<br>**TTS:** {tts_title}", unsafe_allow_html=True)
+
+        with c3:
+            st.caption("Video Generation Models")
+            if config_dict.get('use_svd_flow', True):
+                t2i_title = get_module_title('t2i', modules.get('t2i'))
+                i2v_title = get_module_title('i2v', modules.get('i2v'))
+                st.markdown(f"**Image:** {t2i_title}<br>**Video:** {i2v_title}", unsafe_allow_html=True)
+            else:
+                t2v_title = get_module_title('t2v', modules.get('t2v'))
+                st.markdown(f"**Video:** {t2v_title}")
+    # --- END OF NEW "INFO CHIPS" SECTION ---
     c1, c2, c3 = st.columns([2, 3, 2])
     with c1:
         if st.button("⬅️ Back to Projects"): go_to_step('project_selection')
@@ -545,17 +591,22 @@ def render_processing_dashboard():
     st.subheader("Content Generation Dashboard")
 
     with st.expander("Assembly & Export Settings"):
-        cfg = project.state.project_info.config
+        # --- START OF FIX: Read config directly from project manager state ---
+        # This ensures the UI reflects the *actual* state that will be used.
+        cfg = ContentConfig(**project.state.project_info.config)
+        
         c1, c2 = st.columns(2)
-        current_text_setting = cfg.get('add_narration_text_to_video', True)
+        current_text_setting = cfg.add_narration_text_to_video
         new_text_setting = c1.checkbox("Add Narration Text to Video", value=current_text_setting, help="Render the narration as captions. Requires re-assembly.")
         if new_text_setting != current_text_setting:
             ui_executor.update_project_config('add_narration_text_to_video', new_text_setting)
 
-        current_seed = cfg.get('seed', -1)
+        current_seed = cfg.seed
         new_seed = c2.number_input("Image Seed", value=current_seed, min_value=-1, step=1, help="-1 for random. Changing this requires re-generating images.")
         if new_seed != current_seed:
             ui_executor.update_project_config('seed', new_seed)
+        # --- END OF FIX ---
+
 
     with st.expander("Reference Speaker Audio"):
         uploaded_file = st.file_uploader("Upload New Speaker Audio (.wav)", key="speaker_upload", disabled=st.session_state.is_processing)
@@ -623,7 +674,8 @@ def render_processing_dashboard():
             if scene:
                 chunks_header_c1, chunks_header_c2 = st.columns([0.75, 0.25])
                 with chunks_header_c1: st.subheader("Visual Chunks")
-                with chunks_header_c2: st.button("Regen Chunks", key=f"regen_chunks_{i}", on_click=regen_chunks_callback, args=(i,), disabled=st.session_state.is_processing, use_container_width=True)
+                # --- NEW: Added the Regen Chunks button ---
+                with chunks_header_c2: st.button("Regen Chunks", key=f"regen_chunks_{i}", on_click=regen_chunks_callback, args=(i,), disabled=st.session_state.is_processing, use_container_width=True, help="Regenerate all visual and motion prompts for this scene.")
                 
                 for chunk in scene.chunks:
                     chunk_idx = chunk.chunk_idx
@@ -984,9 +1036,9 @@ class ProjectManager:
                 config_dict[key] = value
                 self._mark_final_for_reassembly() # If assembly setting changes, reassembly is needed
                 self._save_state()
-                print(f"Updated project config: set {key} to {value}")
+                logger.info(f"Updated project config: set {key} to {value}")
         else:
-            print(f"Warning: Attempted to update an unknown config key: {key}")
+            logger.warning(f"Warning: Attempted to update an unknown config key: {key}")
 
     def update_character(self, old_name: str, new_name: str, new_reference_image_path: Optional[str]):
         char = self.get_character(old_name)
@@ -1016,12 +1068,12 @@ class ProjectManager:
         char_dir = os.path.join(self.output_dir, "characters", safe_name)
         if os.path.exists(char_dir):
             shutil.rmtree(char_dir)
-            print(f"Removed character asset directory: {char_dir}")
+            logger.info(f"Removed character asset directory: {char_dir}")
 
         self._save_state()
         
     def _reset_visuals_for_character(self, character_name: str):
-        print(f"Resetting visuals for scenes containing character: {character_name}")
+        logger.info(f"Resetting visuals for scenes containing character: {character_name}")
         for scene in self.state.scenes:
             if character_name in scene.character_names:
                 for chunk in scene.chunks:
@@ -1049,7 +1101,7 @@ class ProjectManager:
 
     def add_new_scene_at(self, scene_idx: int, narration_text: str = "New scene narration.", visual_prompt: str = "A vibrant new scene."):
         if not self.state: return
-        print(f"Adding new scene at index {scene_idx}")
+        logger.info(f"Adding new scene at index {scene_idx}")
 
         new_narration = NarrationPart(text=narration_text)
         new_visual = VisualPrompt(prompt=visual_prompt)
@@ -1071,20 +1123,23 @@ class ProjectManager:
         
         scene_to_reset = self.get_scene_info(scene_idx)
         if not scene_to_reset:
-            print(f"No scene found at index {scene_idx} to reset.")
+            logger.warning(f"No scene found at index {scene_idx} to reset.")
             return
 
-        print(f"Resetting Scene {scene_idx} for chunk regeneration.")
+        logger.info(f"Resetting Scene {scene_idx} for chunk regeneration.")
         # Delete physical assets associated with the scene's chunks
         for chunk in scene_to_reset.chunks:
             if chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path):
-                os.remove(chunk.keyframe_image_path)
+                try: os.remove(chunk.keyframe_image_path)
+                except OSError as e: logger.error(f"Error removing keyframe image {chunk.keyframe_image_path}: {e}")
             if chunk.video_path and os.path.exists(chunk.video_path):
-                os.remove(chunk.video_path)
+                try: os.remove(chunk.video_path)
+                except OSError as e: logger.error(f"Error removing chunk video {chunk.video_path}: {e}")
         
         # Delete the assembled scene video if it exists
         if scene_to_reset.assembled_video_path and os.path.exists(scene_to_reset.assembled_video_path):
-            os.remove(scene_to_reset.assembled_video_path)
+            try: os.remove(scene_to_reset.assembled_video_path)
+            except OSError as e: logger.error(f"Error removing assembled scene video {scene_to_reset.assembled_video_path}: {e}")
 
         # Remove the Scene object from the state
         self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
@@ -1096,7 +1151,7 @@ class ProjectManager:
 
     def remove_scene_at(self, scene_idx: int):
         if not self.state or scene_idx >= len(self.state.script.narration_parts): return
-        print(f"Removing scene at index {scene_idx}")
+        logger.info(f"Removing scene at index {scene_idx}")
 
         del self.state.script.narration_parts[scene_idx]
         del self.state.script.visual_prompts[scene_idx]
@@ -1156,7 +1211,7 @@ class TaskExecutor:
         if not module_selections:
             raise ValueError("Project state is missing module selections. Cannot initialize TaskExecutor.")
 
-        # --- START OF FIX: Use .get() for safe module loading ---
+        # --- START OF FIX: Use .get() for safe module loading to prevent crashes ---
         
         # LLM and TTS are always required
         LlmClass = _import_class(module_selections["llm"])
@@ -1190,18 +1245,18 @@ class TaskExecutor:
         if self.content_cfg.use_svd_flow and self.t2i_module:
             t2i_caps = self.t2i_module.get_capabilities()
             self.active_flow_supports_characters = t2i_caps.supports_ip_adapter
-            print("Decisive module for character support: T2I module.")
+            logger.info("Decisive module for character support: T2I module.")
         elif not self.content_cfg.use_svd_flow and self.t2v_module:
             t2v_caps = self.t2v_module.get_capabilities()
             self.active_flow_supports_characters = t2v_caps.supports_ip_adapter
-            print("Decisive module for character support: T2V module.")
+            logger.info("Decisive module for character support: T2V module.")
         # --- END OF FIX ---
         
-        print(f"Holistic check: Active flow supports characters: {self.active_flow_supports_characters}")
+        logger.info(f"Holistic check: Active flow supports characters: {self.active_flow_supports_characters}")
         self._configure_from_model_capabilities()
 
     def _configure_from_model_capabilities(self):
-        print("--- TaskExecutor: Configuring run from model capabilities... ---")
+        logger.info("--- TaskExecutor: Configuring run from model capabilities... ---")
         if self.content_cfg.use_svd_flow:
             if self.t2i_module and self.i2v_module:
                 t2i_caps = self.t2i_module.get_model_capabilities()
@@ -1209,22 +1264,27 @@ class TaskExecutor:
                 self.content_cfg.generation_resolution = t2i_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
                 self.content_cfg.model_max_video_chunk_duration = i2v_caps.get("max_chunk_duration", 3.0)
             else:
-                print("Warning: T2I or I2V module not loaded for I2V flow. Using default configurations.")
+                logger.warning("Warning: T2I or I2V module not loaded for I2V flow. Using default configurations.")
         else: # T2V Flow
             if self.t2v_module:
                 t2v_caps = self.t2v_module.get_model_capabilities()
                 self.content_cfg.generation_resolution = t2v_caps["resolutions"].get(self.content_cfg.aspect_ratio_format)
                 self.content_cfg.model_max_video_chunk_duration = t2v_caps.get("max_chunk_duration", 2.0)
             else:
-                print("Warning: T2V module not loaded for T2V flow. Using default configurations.")
+                logger.warning("Warning: T2V module not loaded for T2V flow. Using default configurations.")
 
-        print(f"Dynamically set Generation Resolution to: {self.content_cfg.generation_resolution}")
-        print(f"Dynamically set Max Chunk Duration to: {self.content_cfg.model_max_video_chunk_duration}s")
+        logger.info(f"Dynamically set Generation Resolution to: {self.content_cfg.generation_resolution}")
+        logger.info(f"Dynamically set Max Chunk Duration to: {self.content_cfg.model_max_video_chunk_duration}s")
         self.project_manager.state.project_info.config = self.content_cfg.model_dump()
         self.project_manager._save_state()
 
     def execute_task(self, task: str, task_data: Dict) -> bool:
         try:
+            # --- START OF FIX: Refresh config before every task to prevent stale state ---
+            self.content_cfg = ContentConfig(**self.project_manager.state.project_info.config)
+            logger.info(f"Executing task '{task}' with add_narration_text set to: {self.content_cfg.add_narration_text_to_video}")
+            # --- END OF FIX ---
+            
             task_map = {
                 "generate_script": self._execute_generate_script, "generate_audio": self._execute_generate_audio,
                 "create_scene": self._execute_create_scene, "generate_chunk_image": self._execute_generate_chunk_image,
@@ -1258,14 +1318,14 @@ class TaskExecutor:
         
         if actual_audio_duration <= 0 or max_chunk_duration <= 0:
             num_chunks = 1
-            print(f"Warning: Invalid duration detected for Scene {scene_idx} (Audio: {actual_audio_duration}s, Max Chunk: {max_chunk_duration}s). Defaulting to 1 chunk.")
+            logger.warning(f"Warning: Invalid duration detected for Scene {scene_idx} (Audio: {actual_audio_duration}s, Max Chunk: {max_chunk_duration}s). Defaulting to 1 chunk.")
         else:
             num_chunks = math.ceil(actual_audio_duration / max_chunk_duration) or 1
 
-        print("--- Calculating Chunks for Scene {} ---".format(scene_idx))
-        print(f"  - Actual Audio Duration: {actual_audio_duration:.2f}s")
-        print(f"  - Model's Max Chunk Duration: {max_chunk_duration:.2f}s")
-        print(f"  - Calculated Number of Chunks: {num_chunks} ({actual_audio_duration:.2f}s / {max_chunk_duration:.2f}s)")
+        logger.info("--- Calculating Chunks for Scene {} ---".format(scene_idx))
+        logger.info(f"  - Actual Audio Duration: {actual_audio_duration:.2f}s")
+        logger.info(f"  - Model's Max Chunk Duration: {max_chunk_duration:.2f}s")
+        logger.info(f"  - Calculated Number of Chunks: {num_chunks} ({actual_audio_duration:.2f}s / {max_chunk_duration:.2f}s)")
         
         chunk_prompts = self.llm_module.generate_chunk_visual_prompts(
             narration.text, visual_prompt.prompt, num_chunks, self.content_cfg, main_subject, setting
@@ -1282,7 +1342,7 @@ class TaskExecutor:
             chunks.append({"chunk_idx": i, "target_duration": max(0.5, duration), "visual_prompt": visual, "motion_prompt": motion})
         
         all_character_names = [char.name for char in self.project_manager.state.characters]
-        print(f"Creating Scene {scene_idx} and assigning default characters: {all_character_names}")
+        logger.info(f"Creating Scene {scene_idx} and assigning default characters: {all_character_names}")
         self.project_manager.add_scene(scene_idx, chunks, character_names=all_character_names)
         return True
 
@@ -1301,7 +1361,7 @@ class TaskExecutor:
         scene = self.project_manager.get_scene_info(scene_idx)
         ip_adapter_image_paths = []
         if scene and scene.character_names:
-            print(f"Found characters for Scene {scene_idx}: {scene.character_names}")
+            logger.info(f"Found characters for Scene {scene_idx}: {scene.character_names}")
             for name in scene.character_names:
                 char = self.project_manager.get_character(name)
                 if char and os.path.exists(char.reference_image_path):
@@ -1451,8 +1511,8 @@ class UITaskExecutor:
     def create_scene(self, scene_idx: int) -> bool:
         if not self.task_executor: return False
         success = self.task_executor.execute_task("create_scene", {"scene_idx": scene_idx})
-        if success: st.toast(f"Scene {scene_idx + 1} created!", icon="🎬")
-        else: st.error(f"Failed to create Scene {scene_idx + 1}.")
+        if success: st.toast(f"Scene {scene_idx + 1} chunks created!", icon="🎬")
+        else: st.error(f"Failed to create chunks for Scene {scene_idx + 1}.")
         self.project_manager.load_project()
         return success
 
@@ -2191,6 +2251,7 @@ class ZephyrLLM(BaseLLM):
             try to describe the visual prompt in minimum words but in very specific details what a director would want  the image to look like.
             Descrive character, subject and envrionment in words, only chose important words no need to make complete sentances.
             Also descirbe camera mm, shot type, location, lighting, color, mood, etc.
+            Do not include any other text or comments other then given json format.
             """
             messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
             
@@ -2366,7 +2427,7 @@ class JuggernautT2I(BaseT2I):
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
-            title="Juggernaut XL v9 (Quality)",
+            title="Juggernaut XL v9 (Quality), 2 Subjects considered",
             vram_gb_min=8.0,
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],
@@ -2392,26 +2453,26 @@ class JuggernautT2I(BaseT2I):
 
     def _load_pipeline(self):
         if self.pipe is None:
-            # --- START OF MODIFICATION: Add 8-bit loading logic ---
             if self.config.use_8bit_quantization:
                 print("Loading T2I pipeline (Juggernaut) with 8-bit quantization to save VRAM...")
                 bnb_config = BitsAndBytesConfig(
                     load_in_8bit=True,
                 )
+                # --- START OF FIX: Remove device_map and use .to(DEVICE) instead ---
+                # This prevents the accelerate hook conflict when loading IP-Adapters later.
                 self.pipe = StableDiffusionXLPipeline.from_pretrained(
                     self.config.model_id,
                     quantization_config=bnb_config,
                     torch_dtype=torch.float16,
                     variant="fp16",
                     use_safetensors=True,
-                    device_map="balanced"  # Let accelerate handle device placement
-                )
+                ).to(DEVICE)
+                # --- END OF FIX ---
             else:
                 print(f"Loading T2I pipeline (Juggernaut) in full precision to {DEVICE}...")
                 self.pipe = StableDiffusionXLPipeline.from_pretrained(
                     self.config.model_id, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
                 ).to(DEVICE)
-            # --- END OF MODIFICATION ---
             
             self.pipe.scheduler = JuggernautScheduler.from_config(self.pipe.scheduler.config, use_karras_sigmas=True)
             print(f"Juggernaut pipeline configured with {JuggernautScheduler.__name__} sampler.")
@@ -2433,7 +2494,6 @@ class JuggernautT2I(BaseT2I):
         generator = None
         if seed != -1:
             print(f"Using fixed seed for generation: {seed}")
-            # Ensure the generator is on the same device as the pipeline
             generator = torch.Generator(device=self.pipe.device).manual_seed(seed)
         else:
             print("Using random seed for generation.")
@@ -2499,6 +2559,7 @@ class JuggernautT2I(BaseT2I):
 import torch
 from typing import List, Optional, Dict, Any, Union
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
+from diffusers.utils import load_image
 
 from base_modules import BaseT2I, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally
@@ -2518,14 +2579,15 @@ class SdxlT2I(BaseT2I):
         super().__init__(config)
         self.refiner_pipe = None
 
-        # --- NEW: Implement the capabilities contract ---
     @classmethod
     def get_capabilities(cls) -> ModuleCapabilities:
         return ModuleCapabilities(
-            title="SDXL fp16, Port/Landscape, No Subjects considered",
+            title="SDXL + Refiner (High VRAM): No Subjects considered",
             vram_gb_min=10.0, # SDXL with refiner is heavy
             ram_gb_min=16.0,
             supported_formats=["Portrait", "Landscape"],
+            # Even if we don't implement IP-Adapter here, we declare support
+            # because the pipeline is capable. A more advanced version could add it.
             supports_ip_adapter=True,
             supports_lora=True,
             max_subjects=2,
@@ -2562,16 +2624,28 @@ class SdxlT2I(BaseT2I):
         self.pipe, self.refiner_pipe = None, None
         print("T2I (SDXL) VRAM cleared.")
 
-    def generate_image(self, prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None) -> str:
+    # --- START OF FIX: Updated method signature and implementation ---
+    def generate_image(self, prompt: str, negative_prompt: str, output_path: str, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None, seed: int = -1) -> str:
         self._load_pipeline()
 
         if ip_adapter_image:
             print("Warning: SDXLT2I module received IP-Adapter image but does not currently implement its use.")
         
+        generator = None
+        if seed != -1:
+            print(f"Using fixed seed for generation: {seed}")
+            # Ensure the generator is on the same device as the pipeline
+            generator = torch.Generator(device=self.pipe.device).manual_seed(seed)
+        else:
+            print("Using random seed for generation.")
+
         kwargs = {
-            "prompt": prompt, "width": width, "height": height,
+            "prompt": prompt,
+            "negative_prompt": negative_prompt, # Now passing this argument
+            "width": width, "height": height,
             "num_inference_steps": self.config.num_inference_steps,
-            "guidance_scale": self.config.guidance_scale
+            "guidance_scale": self.config.guidance_scale,
+            "generator": generator # Now passing the generator
         }
         if self.refiner_pipe:
             kwargs["output_type"] = "latent"
@@ -2581,15 +2655,20 @@ class SdxlT2I(BaseT2I):
         
         if self.refiner_pipe:
             print("Refining image...")
-            image = self.refiner_pipe(
-                prompt=prompt, image=image,
-                denoising_start=self.config.refiner_denoising_start,
-                num_inference_steps=self.config.num_inference_steps
-            ).images[0]
+            refiner_kwargs = {
+                "prompt": prompt,
+                "negative_prompt": negative_prompt,
+                "image": image,
+                "denoising_start": self.config.refiner_denoising_start,
+                "num_inference_steps": self.config.num_inference_steps,
+                "generator": generator
+            }
+            image = self.refiner_pipe(**refiner_kwargs).images[0]
         
         image.save(output_path)
         print(f"Image saved to {output_path}")
         return output_path
+    # --- END OF FIX ---
 
 
 
@@ -2764,7 +2843,7 @@ class SlideshowI2V(BaseI2V):
         video_clip = None
         try:
             # Create a video clip from the static image and set its duration.
-            video_clip = ImageClip(image_path).set_duration(target_duration)
+            video_clip = ImageClip(image_path).with_duration(target_duration)
             
             # Use the correct syntax for write_videofile, matching video_assembly.py
             video_clip.write_videofile(
@@ -3047,8 +3126,9 @@ class ZeroscopeT2VConfig(BaseModuleConfig):
     
     num_inference_steps: int = 30
     guidance_scale: float = 9.0
-    # NEW: Add strength for the upscaling process, as recommended in the docs
+    # --- START OF FIX: Add strength for the upscaling process ---
     upscaler_strength: float = 0.7 
+    # --- END OF FIX ---
 
 class ZeroscopeT2V(BaseT2V):
     Config = ZeroscopeT2VConfig
@@ -3060,9 +3140,9 @@ class ZeroscopeT2V(BaseT2V):
             vram_gb_min=8.0,
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],
-            supports_ip_adapter=True,
-            supports_lora=True, # Juggernaut is a fine-tune, can easily use LoRAs
-            max_subjects=2, # Can handle one or two IP adapter images
+            supports_ip_adapter=False, # Zeroscope does not support IP-Adapter
+            supports_lora=False, # Zeroscope does not support LoRA loading
+            max_subjects=0,
             accepts_text_prompt=True,
             accepts_negative_prompt=True
         )
@@ -3073,9 +3153,10 @@ class ZeroscopeT2V(BaseT2V):
         self.upscaler_pipe = None
 
     def get_model_capabilities(self) -> Dict[str, Any]:
-        fixed_resolution = (576, 320)
+        # Zeroscope has a fixed native resolution that is then upscaled
+        base_resolution = (576, 320)
         return {
-            "resolutions": {"Portrait": fixed_resolution, "Landscape": fixed_resolution},
+            "resolutions": {"Portrait": base_resolution, "Landscape": base_resolution},
             "max_chunk_duration": 2.0 
         }
 
@@ -3111,26 +3192,30 @@ class ZeroscopeT2V(BaseT2V):
 
         negative_prompt = "blurry, low quality, watermark, bad anatomy, text, letters, distorted"
         
-        print(f"Stage 1: Generating T2V ({width}x{height}) for prompt: \"{prompt[:70]}...\"")
+        # Note: Zeroscope generates at a fixed resolution, so we use its capabilities directly
+        model_res = self.get_model_capabilities()["resolutions"]["Landscape"]
+        
+        print(f"Stage 1: Generating T2V ({model_res[0]}x{model_res[1]}) for prompt: \"{prompt[:70]}...\"")
         
         video_frames_tensor = self.pipe(
             prompt=prompt, negative_prompt=negative_prompt,
             num_inference_steps=self.config.num_inference_steps,
-            height=height, width=width, num_frames=num_frames,
+            height=model_res[1], width=model_res[0], num_frames=num_frames,
             guidance_scale=self.config.guidance_scale, output_type="pt"
-        ).frames[0]
+        ).frames
         
         print("Stage 2: Upscaling video to HD...")
         
-        # FIX: The argument is 'video', not 'image'.
+        # --- START OF FIX ---
         upscaled_video_frames = self.upscaler_pipe(
             prompt=prompt,
             negative_prompt=negative_prompt,
-            video=video_frames_tensor, # <--- THIS IS THE FIX
-            strength=self.config.upscaler_strength, # <--- ADDED STRENGTH
+            video=video_frames_tensor, # The argument is 'video', not 'image'.
+            strength=self.config.upscaler_strength, # Add the strength parameter
             num_inference_steps=self.config.num_inference_steps,
             guidance_scale=self.config.guidance_scale,
         ).frames[0]
+        # --- END OF FIX ---
 
         export_to_video(upscaled_video_frames, output_video_path, fps=fps)
         

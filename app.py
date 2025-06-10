@@ -139,11 +139,67 @@ def render_project_selection():
     
     with c2:
         st.subheader("Existing Projects")
-        for p in list_projects():
+        
+        projects = list_projects()
+        if not projects:
+            st.info("No projects found. Create one to get started!")
+
+        for p in projects:
             with st.container(border=True):
-                pc1, pc2, pc3 = st.columns([4, 2, 1])
-                pc1.write(f"**{p['topic']}**"); pc2.write(f"_{p['created_at'].strftime('%Y-%m-%d %H:%M')}_")
-                pc3.button("Load", key=f"load_{p['name']}", on_click=load_project, args=(p['name'],), use_container_width=True)
+                # Row 1: Title and Date
+                proj_c1, proj_c2 = st.columns([3, 1])
+                with proj_c1:
+                    st.markdown(f"**{p['topic']}**")
+                with proj_c2:
+                    st.caption(f"_{p['created_at'].strftime('%Y-%m-%d %H:%M')}_")
+                
+                # Row 2: Status, Flow, and Duration
+                status_map = { "completed": "✅ Completed", "in_progress": "⚙️ In Progress", "failed": "❌ Failed" }
+                display_status = status_map.get(p['status'], p['status'].title())
+                
+                info_parts = [ f"**Flow:** {p['flow']}", f"**Status:** {display_status}" ]
+                if p['duration'] > 0: info_parts.append(f"**Duration:** {p['duration']:.1f}s")
+                
+                st.markdown(" | ".join(info_parts), help="Project details")
+                
+                # --- NEW: Expander to show the modules used ---
+                with st.expander("Show Modules Used"):
+                    modules_used = p.get('modules', {})
+                    if not modules_used:
+                        st.caption("Module info not available.")
+                    else:
+                        module_info_str = ""
+                        # Get user-friendly titles for each module
+                        llm_title = format_module_option('llm', modules_used.get('llm'))
+                        tts_title = format_module_option('tts', modules_used.get('tts'))
+                        
+                        module_info_str += f"- **LLM:** {llm_title}\n"
+                        module_info_str += f"- **TTS:** {tts_title}\n"
+
+                        if p['flow'] == "Image-to-Video":
+                            t2i_title = format_module_option('t2i', modules_used.get('t2i'))
+                            i2v_title = format_module_option('i2v', modules_used.get('i2v'))
+                            module_info_str += f"- **Image Model:** {t2i_title}\n"
+                            module_info_str += f"- **Video Model:** {i2v_title}\n"
+                        else: # Text-to-Video
+                            t2v_title = format_module_option('t2v', modules_used.get('t2v'))
+                            module_info_str += f"- **Video Model:** {t2v_title}\n"
+                        
+                        st.markdown(module_info_str)
+                # --- END OF NEW ---
+
+                # Row 3: Action Buttons
+                btn_c1, btn_c2 = st.columns(2)
+                
+                with btn_c1:
+                    st.button("Load Project", key=f"load_{p['name']}", on_click=load_project, args=(p['name'],), use_container_width=True)
+                
+                with btn_c2:
+                    if p['final_video_path']:
+                        with st.popover("▶️ Play Video", use_container_width=True):
+                            st.video(p['final_video_path'])
+                    else:
+                        st.button("▶️ Play Video", key=f"play_{p['name']}", disabled=True, use_container_width=True, help="Video not available or project not completed.")
     
     with c1:
         st.subheader("Create New Project")

@@ -3,17 +3,8 @@ import torch
 from typing import List, Optional, Dict, Any, Union
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
 from diffusers.utils import load_image
-
-# --- NEW: Import BitsAndBytesConfig for quantization ---
 from transformers import BitsAndBytesConfig
-
-# --- Gracefully import the correct scheduler ---
-try:
-    from diffusers import DPMMSolverMultistepScheduler as JuggernautScheduler
-    print("INFO: Loaded recommended DPMMSolverMultistepScheduler for Juggernaut.")
-except ImportError:
-    print("WARNING: DPMMSolverMultistepScheduler not found. Falling back to DPMSolverMultistepScheduler.")
-    from diffusers import DPMSolverMultistepScheduler as JuggernautScheduler
+from diffusers import DPMSolverMultistepScheduler as JuggernautScheduler
 
 from base_modules import BaseT2I, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally

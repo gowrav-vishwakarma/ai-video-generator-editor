@@ -34,6 +34,7 @@ ENV/
 *.swo
 
 # Project specific
+prompt_helpers/
 instagram_content/
 output/
 my_reels/

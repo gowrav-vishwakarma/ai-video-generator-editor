@@ -15,7 +15,7 @@ torch.classes.__path__ = []
 from project_manager import ProjectManager
 from config_manager import ContentConfig
 from ui_task_executor import UITaskExecutor
-from utils import load_and_correct_image_orientation
+from utils import list_projects, load_and_correct_image_orientation
 from module_discovery import discover_modules
 
 # Page Config
@@ -36,24 +36,6 @@ def init_session_state():
     for key, value in defaults.items():
         if key not in st.session_state: st.session_state[key] = value
 init_session_state()
-
-# Helper Functions
-def list_projects():
-    projects = []
-    base_dir = "modular_reels_output"
-    if not os.path.exists(base_dir): return []
-    for project_dir in os.listdir(base_dir):
-        project_path = os.path.join(base_dir, project_dir)
-        if os.path.isdir(project_path):
-            project_file = os.path.join(project_path, "project.json")
-            if os.path.exists(project_file):
-                try:
-                    with open(project_file, 'r') as f: data = json.load(f)
-                    projects.append({'name': project_dir, 'topic': data['project_info']['topic'], 'created_at': datetime.fromtimestamp(data['project_info']['created_at']), 'status': data['project_info']['status']})
-                except Exception as e:
-                    st.error(f"Error loading project {project_dir}: {e}")
-    return sorted(projects, key=lambda p: p['created_at'], reverse=True)
-
 
 def go_to_step(step_name):
     st.session_state.current_step = step_name

@@ -6,7 +6,6 @@ from config_manager import ContentConfig
 import logging
 from typing import List, Optional
 import os
-# --- FIX: Import the helper function from app.py ---
 from utils import load_and_correct_image_orientation
 
 logger = logging.getLogger(__name__)
@@ -14,7 +13,6 @@ logger = logging.getLogger(__name__)
 class UITaskExecutor:
     """Handles task execution triggered from the Streamlit UI, providing user feedback."""
     
-    # ... (no changes to __init__ or other methods) ...
     def __init__(self, project_manager):
         self.project_manager = project_manager
         self.task_executor: Optional[TaskExecutor] = None
@@ -130,7 +128,6 @@ class UITaskExecutor:
             os.makedirs(char_dir, exist_ok=True)
             ref_image_path = os.path.join(char_dir, "reference.png")
 
-            # --- FIX: Correct orientation before saving the new image ---
             corrected_image = load_and_correct_image_orientation(new_image_file)
             if corrected_image:
                 corrected_image.save(ref_image_path, "PNG")

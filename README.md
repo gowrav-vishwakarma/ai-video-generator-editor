@@ -298,3 +298,13 @@ from .i2v_motion_weaver import MotionWeaverI2V # <-- Add this line
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+### Important Notice Regarding Model Licenses
+
+While this project itself is MIT-licensed, the AI models used within this pipeline (including but not limited to language models, text-to-speech models, image generation models, and video generation models) are subject to their own respective licenses. Users of this project are responsible for:
+
+1. Reviewing and complying with the license terms of each model they choose to use
+2. Ensuring they have the necessary rights and permissions to use these models
+3. Understanding that different models may have different usage restrictions, commercial terms, and attribution requirements
+
+The MIT license of this project does not override or modify the license terms of any third-party models. Users must independently verify and comply with all applicable model licenses before use.

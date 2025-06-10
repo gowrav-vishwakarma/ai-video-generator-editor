@@ -145,6 +145,7 @@ import datetime
 import json
 import os
 from PIL import Image, ImageOps
+from moviepy import VideoFileClip
 import streamlit as st # Keep st for st.error
 
 def load_and_correct_image_orientation(image_source):
@@ -165,7 +166,7 @@ def load_and_correct_image_orientation(image_source):
         return None
 
 def list_projects():
-    """Lists all projects from the output directory."""
+    """Lists all projects from the output directory with extended details including modules."""
     projects = []
     base_dir = "modular_reels_output"
     if not os.path.exists(base_dir): return []
@@ -175,15 +176,44 @@ def list_projects():
             project_file = os.path.join(project_path, "project.json")
             if os.path.exists(project_file):
                 try:
-                    with open(project_file, 'r') as f: data = json.load(f)
+                    with open(project_file, 'r') as f: 
+                        data = json.load(f)
+                    
+                    config = data.get('project_info', {}).get('config', {})
+                    final_video_info = data.get('final_video', {})
+                    status = data.get('project_info', {}).get('status', 'unknown')
+
+                    flow = "Image-to-Video" if config.get('use_svd_flow', True) else "Text-to-Video"
+                    
+                    final_video_path = None
+                    duration = 0.0
+                    if status == 'completed':
+                        stored_path = final_video_info.get('path')
+                        if stored_path and os.path.exists(stored_path):
+                            final_video_path = stored_path
+                            try:
+                                with VideoFileClip(final_video_path) as clip:
+                                    duration = clip.duration
+                            except Exception as e:
+                                print(f"Could not read video duration for {final_video_path}: {e}")
+                                duration = 0.0
+                    
+                    # --- NEW: Extract module selections ---
+                    modules = config.get('module_selections', {})
+                    # --- END OF NEW ---
+
                     projects.append({
                         'name': project_dir, 
                         'topic': data['project_info']['topic'], 
                         'created_at': datetime.datetime.fromtimestamp(data['project_info']['created_at']), 
-                        'status': data['project_info']['status']
+                        'status': status,
+                        'flow': flow,
+                        'final_video_path': final_video_path,
+                        'duration': duration,
+                        'modules': modules, # Add modules to the returned dictionary
                     })
                 except Exception as e:
-                    print(f"Error loading project {project_dir}: {e}") # Use print for NiceGUI server logs
+                    print(f"Error loading project {project_dir}: {e}") 
     return sorted(projects, key=lambda p: p['created_at'], reverse=True)
 
 
@@ -383,11 +413,67 @@ def render_project_selection():
     
     with c2:
         st.subheader("Existing Projects")
-        for p in list_projects():
+        
+        projects = list_projects()
+        if not projects:
+            st.info("No projects found. Create one to get started!")
+
+        for p in projects:
             with st.container(border=True):
-                pc1, pc2, pc3 = st.columns([4, 2, 1])
-                pc1.write(f"**{p['topic']}**"); pc2.write(f"_{p['created_at'].strftime('%Y-%m-%d %H:%M')}_")
-                pc3.button("Load", key=f"load_{p['name']}", on_click=load_project, args=(p['name'],), use_container_width=True)
+                # Row 1: Title and Date
+                proj_c1, proj_c2 = st.columns([3, 1])
+                with proj_c1:
+                    st.markdown(f"**{p['topic']}**")
+                with proj_c2:
+                    st.caption(f"_{p['created_at'].strftime('%Y-%m-%d %H:%M')}_")
+                
+                # Row 2: Status, Flow, and Duration
+                status_map = { "completed": "✅ Completed", "in_progress": "⚙️ In Progress", "failed": "❌ Failed" }
+                display_status = status_map.get(p['status'], p['status'].title())
+                
+                info_parts = [ f"**Flow:** {p['flow']}", f"**Status:** {display_status}" ]
+                if p['duration'] > 0: info_parts.append(f"**Duration:** {p['duration']:.1f}s")
+                
+                st.markdown(" | ".join(info_parts), help="Project details")
+                
+                # --- NEW: Expander to show the modules used ---
+                with st.expander("Show Modules Used"):
+                    modules_used = p.get('modules', {})
+                    if not modules_used:
+                        st.caption("Module info not available.")
+                    else:
+                        module_info_str = ""
+                        # Get user-friendly titles for each module
+                        llm_title = format_module_option('llm', modules_used.get('llm'))
+                        tts_title = format_module_option('tts', modules_used.get('tts'))
+                        
+                        module_info_str += f"- **LLM:** {llm_title}\n"
+                        module_info_str += f"- **TTS:** {tts_title}\n"
+
+                        if p['flow'] == "Image-to-Video":
+                            t2i_title = format_module_option('t2i', modules_used.get('t2i'))
+                            i2v_title = format_module_option('i2v', modules_used.get('i2v'))
+                            module_info_str += f"- **Image Model:** {t2i_title}\n"
+                            module_info_str += f"- **Video Model:** {i2v_title}\n"
+                        else: # Text-to-Video
+                            t2v_title = format_module_option('t2v', modules_used.get('t2v'))
+                            module_info_str += f"- **Video Model:** {t2v_title}\n"
+                        
+                        st.markdown(module_info_str)
+                # --- END OF NEW ---
+
+                # Row 3: Action Buttons
+                btn_c1, btn_c2 = st.columns(2)
+                
+                with btn_c1:
+                    st.button("Load Project", key=f"load_{p['name']}", on_click=load_project, args=(p['name'],), use_container_width=True)
+                
+                with btn_c2:
+                    if p['final_video_path']:
+                        with st.popover("▶️ Play Video", use_container_width=True):
+                            st.video(p['final_video_path'])
+                    else:
+                        st.button("▶️ Play Video", key=f"play_{p['name']}", disabled=True, use_container_width=True, help="Video not available or project not completed.")
     
     with c1:
         st.subheader("Create New Project")
@@ -2389,17 +2475,8 @@ import torch
 from typing import List, Optional, Dict, Any, Union
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline
 from diffusers.utils import load_image
-
-# --- NEW: Import BitsAndBytesConfig for quantization ---
 from transformers import BitsAndBytesConfig
-
-# --- Gracefully import the correct scheduler ---
-try:
-    from diffusers import DPMMSolverMultistepScheduler as JuggernautScheduler
-    print("INFO: Loaded recommended DPMMSolverMultistepScheduler for Juggernaut.")
-except ImportError:
-    print("WARNING: DPMMSolverMultistepScheduler not found. Falling back to DPMSolverMultistepScheduler.")
-    from diffusers import DPMSolverMultistepScheduler as JuggernautScheduler
+from diffusers import DPMSolverMultistepScheduler as JuggernautScheduler
 
 from base_modules import BaseT2I, BaseModuleConfig, ModuleCapabilities
 from config_manager import DEVICE, clear_vram_globally

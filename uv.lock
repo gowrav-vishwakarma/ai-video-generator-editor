@@ -905,6 +905,12 @@ wheels = [
 ]
 
 [[package]]
+name = "gputil"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/0e/5c61eedde9f6c87713e89d794f01e378cfd9565847d4576fa627d758c554/GPUtil-1.4.0.tar.gz", hash = "sha256:099e52c65e512cdfa8c8763fca67f5a5c2afb63469602d5dcb4d296b3661efb9", size = 5545, upload_time = "2018-12-18T09:12:13.63Z" }
+
+[[package]]
 name = "grpcio"
 version = "1.73.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1199,6 +1205,7 @@ dependencies = [
     { name = "coqui-tts" },
     { name = "diffusers" },
     { name = "ftfy" },
+    { name = "gputil" },
     { name = "hf-transfer" },
     { name = "hf-xet" },
     { name = "huggingface-hub", extra = ["cli"] },
@@ -1207,6 +1214,7 @@ dependencies = [
     { name = "moviepy" },
     { name = "nicegui" },
     { name = "numpy" },
+    { name = "psutil" },
     { name = "pydantic" },
     { name = "sentencepiece" },
     { name = "streamlit" },
@@ -1222,6 +1230,7 @@ requires-dist = [
     { name = "coqui-tts", specifier = ">=0.24.3" },
     { name = "diffusers", specifier = ">=0.33.1" },
     { name = "ftfy", specifier = ">=6.3.1" },
+    { name = "gputil", specifier = ">=1.4.0" },
     { name = "hf-transfer", specifier = ">=0.1.9" },
     { name = "hf-xet", specifier = ">=1.1.1" },
     { name = "huggingface-hub", extras = ["cli"], specifier = ">=0.31.2" },
@@ -1230,6 +1239,7 @@ requires-dist = [
     { name = "moviepy", specifier = ">=2.1.2" },
     { name = "nicegui", specifier = ">=2.19.0" },
     { name = "numpy", specifier = ">=1.26.4" },
+    { name = "psutil", specifier = ">=7.0.0" },
     { name = "pydantic", specifier = ">=2.11.5" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "streamlit", specifier = ">=1.45.1" },

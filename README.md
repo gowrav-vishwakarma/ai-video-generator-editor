@@ -29,6 +29,49 @@ An extensible, modular pipeline for generating short-form videos using a variety
 -   **Multi-Language Voice Generation**: Generate narration in over 15 languages (including English, Spanish, French, German, Japanese, Hindi, and more) using advanced TTS models.
 -   **Voice Cloning**: Provide a short `.wav` file of a reference voice to clone it for the video's narration, powered by Coqui XTTS.
 
+## Future Development Plans
+
+### TODO List
+
+1. **Text-to-Music (TTM) Modules**
+   - Background music generation for videos
+   - Pure music production capabilities
+   - Integration with existing video pipeline
+
+2. **Additional Model Support**
+   - FramePack and other advanced video generation models
+   - Enhanced model compatibility and optimization
+   - Lora (Low-Rank Adaptation) support for fine-tuning models
+   - Custom Lora training and management interface
+   - ControlNet integration for pose, depth, and style control
+   - Advanced ControlNet features (canny, segmentation, etc.)
+
+3. **Character Consistency Features**
+   - Lora-based character consistency across scenes
+   - Character style preservation and transfer
+   - Multi-character management system
+   - Character pose and expression control
+
+4. **Advanced Editing Features**
+   - Multilayer timeline style editor
+   - Professional-grade video editing capabilities
+   - Enhanced control over transitions and effects
+
+5. **UI/UX Improvements**
+   - Migration to FastAPI backend
+   - Modern frontend with React/Vue
+   - Enhanced user experience and performance
+
+6. **Production Infrastructure**
+   - Distributed model serving system
+   - Load balancing across multiple GPUs/servers
+   - Model caching and optimization
+   - User quota and resource management
+   - Queue management for multiple users
+   - Real-time progress tracking and status updates
+   - Automatic failover and recovery
+   - Resource usage analytics and monitoring
+
 ## Architectural Overview
 
 The pipeline follows a state-driven, sequential process. The `ProjectManager` tracks the status of every task in a `project.json` file. The `TaskExecutor` then reads this state and executes the next pending task using the specific modules you selected for the project.
@@ -100,7 +143,7 @@ source .venv/bin/activate
 .venv\Scripts\activate
 
 # Install all packages using the provided command
-uv pip install torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy ftfy "huggingface-hub[cli]" hf-transfer accelerate bitsandbytes pydantic --no-build-package llvmlite
+uv pip install torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy psutil gputil ftfy "huggingface-hub[cli]" hf-transfer accelerate bitsandbytes pydantic --no-build-package llvmlite
 ```
 > **Note:** The `--no-build-package llvmlite` flag is included to prevent `uv` from trying to build the `llvmlite` package from source, which can fail without the proper LLVM toolchain. This forces it to use a pre-compiled wheel.
 

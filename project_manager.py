@@ -16,6 +16,7 @@ STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED = "image_generated", "video_gener
 # --- Pydantic Models for Project State ---
 
 class ProjectInfo(BaseModel):
+    title: str
     topic: str
     created_at: float = Field(default_factory=time.time)
     last_modified: float = Field(default_factory=time.time)
@@ -93,8 +94,8 @@ class ProjectManager:
         with open(self.project_file, 'w') as f:
             f.write(self.state.model_dump_json(indent=4))
             
-    def initialize_project(self, topic: str, config: ContentConfig):
-        project_info = ProjectInfo(topic=topic, config=config.model_dump())
+    def initialize_project(self, title: str, topic: str, config: ContentConfig):
+        project_info = ProjectInfo(title=title, topic=topic, config=config.model_dump())
         self.state = ProjectState(project_info=project_info)
         self._save_state()
     

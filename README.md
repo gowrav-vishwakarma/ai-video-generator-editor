@@ -100,7 +100,7 @@ source .venv/bin/activate
 .venv\Scripts\activate
 
 # Install all packages using the provided command
-uv pip install torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy "huggingface-hub[cli]" hf-transfer accelerate bitsandbytes pydantic --no-build-package llvmlite
+uv pip install torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy ftfy "huggingface-hub[cli]" hf-transfer accelerate bitsandbytes pydantic --no-build-package llvmlite
 ```
 > **Note:** The `--no-build-package llvmlite` flag is included to prevent `uv` from trying to build the `llvmlite` package from source, which can fail without the proper LLVM toolchain. This forces it to use a pre-compiled wheel.
 

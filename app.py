@@ -63,8 +63,8 @@ def load_project(project_name):
         st.error("Failed to load project.")
 
 
-def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_selections, language, add_narration_text, seed):
-    name = "".join(c for c in topic.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
+def create_new_project(title, topic, auto, audio, video_format, length, min_s, max_s, use_svd, characters, module_selections, language, add_narration_text, seed):
+    name = "".join(c for c in title.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{name}_{int(time.time())}"
     
     cfg = ContentConfig(
@@ -80,7 +80,7 @@ def create_new_project(topic, auto, audio, video_format, length, min_s, max_s, u
         seed=seed
     )
     pm = ProjectManager(output_dir)
-    pm.initialize_project(topic, cfg)
+    pm.initialize_project(title, topic, cfg)
 
     if characters:
         for char_info in characters:
@@ -149,7 +149,7 @@ def render_project_selection():
                 # Row 1: Title and Date
                 proj_c1, proj_c2 = st.columns([3, 1])
                 with proj_c1:
-                    st.markdown(f"**{p['topic']}**")
+                    st.markdown(f"**{p['title']}**")
                 with proj_c2:
                     st.caption(f"_{p['created_at'].strftime('%Y-%m-%d %H:%M')}_")
                 
@@ -252,8 +252,11 @@ def render_project_selection():
             # --- END OF FIX ---
             
             st.divider()
-            st.info("Step 2: Define your project topic and content.")
-            topic = st.text_area("Video Topic")
+            st.info("Step 2: Define your project title and content topic.")
+            
+            title = st.text_input("Project Title", help="A user-friendly name for your project. This will be used for the folder name.")
+            topic = st.text_area("Video Topic / Prompt", help="The main idea or prompt for the AI to generate the script.")
+            
             col1, col2 = st.columns(2)
             fmt = col1.selectbox("Format", ("Portrait", "Landscape"), index=1)
             length = col2.number_input("Length (s)", min_value=5, value=20, step=5)
@@ -278,9 +281,11 @@ def render_project_selection():
                     st.error("A required module for the selected workflow is missing. Please check your selections.")
                 elif not topic: 
                     st.error("Topic required.")
+                elif not audio:
+                    st.error("Reference Speaker Audio is required. Please upload a .wav file.")
                 else:
                     final_chars = st.session_state.new_project_characters if show_char_section else []
-                    create_new_project(topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections, final_language, add_narration_text, seed)
+                    create_new_project(title, topic, auto, audio, fmt, length, min_s, max_s, use_svd, final_chars, module_selections, final_language, add_narration_text, seed)
         
         st.divider()
         st.subheader("Add Characters (Optional)")
@@ -321,7 +326,8 @@ def render_processing_dashboard():
     supports_characters = ui_executor.task_executor.active_flow_supports_characters
     use_svd_flow = project.state.project_info.config.get("use_svd_flow", True)
 
-    st.title(f"🎬 Project: {project.state.project_info.topic}")
+    st.title(f"🎬 Project: {project.state.project_info.title}")
+    st.caption(f"LLM Topic: {project.state.project_info.topic}")
     # --- START OF NEW "INFO CHIPS" SECTION ---
     with st.container(border=True):
         def get_module_title(mod_type: str, path: str) -> str:

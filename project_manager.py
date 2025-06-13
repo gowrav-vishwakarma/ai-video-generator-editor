@@ -21,13 +21,11 @@ class ProjectManager:
         self.state: Optional[ProjectState] = None
         os.makedirs(self.output_dir, exist_ok=True)
         
-    # --- REVERTED TO SIMPLE SAVE ---
     def _save_state(self):
         """Saves the current in-memory state to the project file."""
         if not self.state: return
         with open(self.project_file, 'w', encoding='utf-8') as f:
             f.write(self.state.model_dump_json(indent=2))
-    # --- END OF REVERT ---
             
     def initialize_project(self, title: str, video_format: str):
         self.state = ProjectState(title=title, video_format=video_format)
@@ -45,6 +43,7 @@ class ProjectManager:
                 for shot in scene.shots:
                     if not hasattr(shot, 'generation_flow'): shot.generation_flow = "T2I_I2V"; needs_save = True
                     if not hasattr(shot, 'uploaded_image_path'): shot.uploaded_image_path = None; needs_save = True
+                    if not hasattr(shot, 'user_defined_duration'): shot.user_defined_duration = None; needs_save = True
             if needs_save: logger.warning(f"Upgraded old project format: '{self.state.title}'"); self._save_state()
             return True
         except Exception as e:

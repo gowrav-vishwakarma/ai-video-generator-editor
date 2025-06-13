@@ -28,21 +28,44 @@ class UITaskExecutor:
         if self._task_executor is None: self._task_executor = TaskExecutor(self.pm)
         return self._task_executor
     
+    # --- START: DEFINITIVE get_shot_duration FIX ---
     def get_shot_duration(self, shot: Shot) -> float:
+        """
+        Calculates a shot's actual contribution to the timeline.
+        It's the LESSER of its allocated time slot and the selected module's max generation time.
+        """
+        # 1. Find the shot's parent scene to get context.
         scene = next((s for s in self.pm.state.scenes if shot in s.shots), None)
-        if not scene or not scene.narration.duration > 0 or not scene.shots: return 0.0
+        if not scene or not scene.narration.duration > 0 or not scene.shots:
+            return 0.0
+
+        # 2. Calculate the "time slot" allocated to this shot.
         target_shot_duration = scene.narration.duration / len(scene.shots)
+
+        # 3. Determine the maximum time the selected video module can generate.
         flow = shot.generation_flow
         if flow in ("T2I_I2V", "Upload_I2V"): module_path = shot.module_selections.get('i2v')
         elif flow == "T2V": module_path = shot.module_selections.get('t2v')
-        else: return 0.0
-        if not module_path: return 0.0
+        else:
+            return 0.0
+
+        if not module_path:
+            return 0.0 # No module selected yet, so it contributes 0 duration.
+
         ModuleClass = _import_class(module_path)
-        if not ModuleClass: return 0.0
+        if not ModuleClass:
+            return 0.0
+        
         try:
-            model_caps = ModuleClass.get_model_capabilities(); module_max_duration = model_caps.get("max_shot_duration", 0.0)
-        except Exception: module_max_duration = 0.0
+            model_caps = ModuleClass.get_model_capabilities()
+            module_max_duration = model_caps.get("max_shot_duration", 0.0)
+        except Exception as e:
+            print(f"Warning: Could not get capabilities for {module_path}. {e}")
+            module_max_duration = 0.0
+        
+        # 4. The actual contribution is the smaller of the two values.
         return min(target_shot_duration, module_max_duration)
+    # --- END: DEFINITIVE FIX ---
 
     def add_scene(self):
         from system import select_item; self.pm.add_scene()
@@ -50,6 +73,15 @@ class UITaskExecutor:
         if new_pm.state.scenes:
             new_scene = new_pm.state.scenes[-1]; select_item('scene', new_scene.uuid)
         st.toast("New scene added.", icon="🎬"); st.rerun()
+
+    # def update_shot_flow(self, scene_uuid: UUID, shot_uuid: UUID):
+    #     flow_key = f"flow_select_{shot_uuid}"; selected_flow_title = st.session_state.get(flow_key)
+    #     flow_options = {"T2I ➡️ I2V": "T2I_I2V", "T2V": "T2V", "Upload ➡️ I2V": "Upload_I2V"}
+    #     new_flow_value = flow_options.get(selected_flow_title)
+    #     if new_flow_value:
+    #         shot = self.pm.get_shot(scene_uuid, shot_uuid)
+    #         if shot and shot.generation_flow != new_flow_value:
+    #             self.pm.update_shot(scene_uuid, shot_uuid, {"generation_flow": new_flow_value})
 
     def update_scene_title(self, scene_uuid: UUID):
         key = f"title_{scene_uuid}"; new_title = st.session_state.get(key)
@@ -59,54 +91,38 @@ class UITaskExecutor:
         key = f"narration_{scene_uuid}"; new_text = st.session_state.get(key)
         if new_text is not None: self.pm.update_scene(scene_uuid, {"narration_text": new_text})
 
-    # --- START: CORRECTED on_change CALLBACK ---
     def update_scene_voice(self, scene_uuid: UUID):
-        """
-        Standard callback that gets the new value from session_state itself.
-        This is the most robust way to handle on_change.
-        """
-        voice_key = f"voice_select_{scene_uuid}"
-        selected_voice_name = st.session_state.get(voice_key)
-        
+        voice_key = f"voice_select_{scene_uuid}"; selected_voice_name = st.session_state.get(voice_key)
         voice_options = {v.name: v.uuid for v in self.pm.state.voices}
-        
         if selected_voice_name and selected_voice_name in voice_options:
             new_voice_uuid = voice_options[selected_voice_name]
-            
-            # Prevent redundant updates
             scene = self.pm.get_scene(scene_uuid)
             if scene and scene.narration.voice_uuid != new_voice_uuid:
-                self.pm.update_scene(scene_uuid, {"voice_uuid": new_voice_uuid})
-                st.toast("Voice updated.", icon="🗣️")
-    # --- END: CORRECTED on_change CALLBACK ---
-
-    def _execute_and_reload(self, task, data, success_msg, error_msg):
-        with st.spinner(f"{error_msg.replace('failed', 'in progress')}..."):
-            success = self.task_executor.execute_task(task, data)
-        _reload_project_state(self.pm)
-        if success:
-            st.toast(success_msg, icon="✨"); st.rerun()
-        else:
-            st.error(error_msg)
+                self.pm.update_scene(scene_uuid, {"voice_uuid": new_voice_uuid}); st.toast("Voice updated.", icon="🗣️")
     
-    # ... The rest of the file is unchanged ...
-    def create_character(self, name: str, image_file): #...
+    def _execute_and_reload(self, task, data, success_msg, error_msg):
+        with st.spinner(f"{error_msg.replace('failed', 'in progress')}..."): success = self.task_executor.execute_task(task, data)
+        _reload_project_state(self.pm)
+        if success: st.toast(success_msg, icon="✨"); st.rerun()
+        else: st.error(error_msg)
+    
+    def create_character(self, name: str, image_file):
         char_dir = os.path.join(self.pm.output_dir, "characters", name.replace(" ", "_")); os.makedirs(char_dir, exist_ok=True)
         img_path = os.path.join(char_dir, "base_reference.png"); corrected_image = load_and_correct_image_orientation(image_file)
         if corrected_image: corrected_image.save(img_path, "PNG"); self.pm.add_character(name, img_path); st.toast(f"Character '{name}' created!", icon="👤"); _reload_project_state(self.pm)
         else: st.error("Could not process image.")
-    def create_voice(self, name: str, module_path: str, wav_file): #...
+    def create_voice(self, name: str, module_path: str, wav_file):
         voice_dir = os.path.join(self.pm.output_dir, "voices", name.replace(" ", "_")); os.makedirs(voice_dir, exist_ok=True)
         wav_path = os.path.join(voice_dir, "reference.wav");
         with open(wav_path, "wb") as f: f.write(wav_file.getbuffer())
         self.pm.add_voice(name, module_path, wav_path); st.toast(f"Voice '{name}' created!", icon="🗣️"); _reload_project_state(self.pm)
-    def delete_scene(self, scene_uuid: UUID): #...
+    def delete_scene(self, scene_uuid: UUID):
         self.pm.delete_scene(scene_uuid); st.toast("Scene deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('project', self.pm.state.uuid); st.rerun()
-    def add_shot_to_scene(self, scene_uuid: UUID): #...
+    def add_shot_to_scene(self, scene_uuid: UUID):
         self.pm.add_shot_to_scene(scene_uuid); st.toast("New shot added.", icon="🎞️"); _reload_project_state(self.pm); st.rerun()
-    def delete_shot(self, scene_uuid: UUID, shot_uuid: UUID): #...
+    def delete_shot(self, scene_uuid: UUID, shot_uuid: UUID):
         self.pm.delete_shot(scene_uuid, shot_uuid); st.toast("Shot deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('scene', scene_uuid); st.rerun()
-    def handle_shot_image_upload(self, scene_uuid: UUID, shot_uuid: UUID, image_file): #...
+    def handle_shot_image_upload(self, scene_uuid: UUID, shot_uuid: UUID, image_file):
         shot_dir = os.path.join(self.pm.output_dir, "shots", str(shot_uuid)); os.makedirs(shot_dir, exist_ok=True)
         img_path = os.path.join(shot_dir, "uploaded_reference.png"); corrected_image = load_and_correct_image_orientation(image_file)
         if corrected_image:

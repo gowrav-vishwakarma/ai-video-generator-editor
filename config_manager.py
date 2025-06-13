@@ -47,10 +47,9 @@ class Narration(BaseModel):
 
 class Shot(BaseModel):
     uuid: UUID = Field(default_factory=uuid4)
-    # --- START OF MODIFICATION ---
     generation_flow: Literal["T2I_I2V", "T2V", "Upload_I2V"] = "T2I_I2V"
     uploaded_image_path: Optional[str] = None
-    # --- END OF MODIFICATION ---
+    user_defined_duration: Optional[float] = None
     
     visual_prompt: str = "A cinematic shot"
     motion_prompt: str = "Subtle camera movement"
@@ -62,9 +61,7 @@ class Shot(BaseModel):
 
 class Scene(BaseModel):
     uuid: UUID = Field(default_factory=uuid4)
-    # --- START OF MODIFICATION ---
     title: str = "Untitled Scene"
-    # --- END OF MODIFICATION ---
     narration: Narration = Field(default_factory=Narration)
     shots: List[Shot] = Field(default_factory=list)
     assembled_video_path: Optional[str] = None

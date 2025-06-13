@@ -31,8 +31,8 @@ class UITaskExecutor:
     def update_narration_text(self, scene_idx: int, text: str):
         self.project_manager.update_narration_part_text(scene_idx, text)
 
-    def update_chunk_prompts(self, scene_idx: int, chunk_idx: int, visual_prompt: Optional[str] = None, motion_prompt: Optional[str] = None):
-        self.project_manager.update_chunk_content(scene_idx, chunk_idx, visual_prompt, motion_prompt)
+    def update_shot_prompts(self, scene_idx: int, shot_idx: int, visual_prompt: Optional[str] = None, motion_prompt: Optional[str] = None):
+        self.project_manager.update_shot_content(scene_idx, shot_idx, visual_prompt, motion_prompt)
 
     def regenerate_audio(self, scene_idx: int, text: str, speaker_audio: Optional[str] = None) -> bool:
         if not self.task_executor: return False
@@ -47,65 +47,65 @@ class UITaskExecutor:
     def create_scene(self, scene_idx: int) -> bool:
         if not self.task_executor: return False
         success = self.task_executor.execute_task("create_scene", {"scene_idx": scene_idx})
-        if success: st.toast(f"Scene {scene_idx + 1} chunks created!", icon="🎬")
-        else: st.error(f"Failed to create chunks for Scene {scene_idx + 1}.")
+        if success: st.toast(f"Scene {scene_idx + 1} shots created!", icon="🎬")
+        else: st.error(f"Failed to create shots for Scene {scene_idx + 1}.")
         self.project_manager.load_project()
         return success
 
     # --- NEW METHOD ---
-    def regenerate_scene_chunks(self, scene_idx: int) -> bool:
-        """Resets a scene and triggers the 'create_scene' task to regenerate chunks."""
+    def regenerate_scene_shots(self, scene_idx: int) -> bool:
+        """Resets a scene and triggers the 'create_scene' task to regenerate shots."""
         if not self.task_executor: return False
 
-        # First, reset the scene, clearing old chunks and assets
-        self.project_manager.reset_scene_for_chunk_regeneration(scene_idx)
-        st.toast(f"Cleared old chunks for Scene {scene_idx + 1}. Regenerating...", icon="♻️")
+        # First, reset the scene, clearing old shots and assets
+        self.project_manager.reset_scene_for_shot_regeneration(scene_idx)
+        st.toast(f"Cleared old shots for Scene {scene_idx + 1}. Regenerating...", icon="♻️")
 
         # Now, execute the create_scene task which will find the scene missing and create it
         success = self.task_executor.execute_task("create_scene", {"scene_idx": scene_idx})
         
         if success:
-            st.toast(f"New chunks for Scene {scene_idx + 1} generated!", icon="✨")
+            st.toast(f"New shots for Scene {scene_idx + 1} generated!", icon="✨")
         else:
-            st.error(f"Failed to regenerate chunks for Scene {scene_idx + 1}.")
+            st.error(f"Failed to regenerate shots for Scene {scene_idx + 1}.")
         
         self.project_manager.load_project()
         return success
 
-    def regenerate_chunk_image(self, scene_idx: int, chunk_idx: int) -> bool:
+    def regenerate_shot_image(self, scene_idx: int, shot_idx: int) -> bool:
         if not self.task_executor: return False
-        self.project_manager.update_chunk_content(scene_idx, chunk_idx) 
-        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
-        task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk.visual_prompt}
-        success = self.task_executor.execute_task("generate_chunk_image", task_data)
-        if success: st.toast(f"Image for Chunk {chunk_idx + 1} generated!", icon="🖼️")
-        else: st.error(f"Failed to generate image for Chunk {chunk_idx + 1}.")
+        self.project_manager.update_shot_content(scene_idx, shot_idx) 
+        shot = self.project_manager.get_scene_info(scene_idx).shots[shot_idx]
+        task_data = {"scene_idx": scene_idx, "shot_idx": shot_idx, "visual_prompt": shot.visual_prompt}
+        success = self.task_executor.execute_task("generate_shot_image", task_data)
+        if success: st.toast(f"Image for Shot {shot_idx + 1} generated!", icon="🖼️")
+        else: st.error(f"Failed to generate image for Shot {shot_idx + 1}.")
         self.project_manager.load_project()
         return success
 
-    def regenerate_chunk_video(self, scene_idx: int, chunk_idx: int) -> bool:
+    def regenerate_shot_video(self, scene_idx: int, shot_idx: int) -> bool:
         if not self.task_executor: return False
-        self.project_manager.update_chunk_content(scene_idx, chunk_idx)
-        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
+        self.project_manager.update_shot_content(scene_idx, shot_idx)
+        shot = self.project_manager.get_scene_info(scene_idx).shots[shot_idx]
         task_data = {
-            "scene_idx": scene_idx, "chunk_idx": chunk_idx,
-            "visual_prompt": chunk.visual_prompt,
-            "motion_prompt": chunk.motion_prompt
+            "scene_idx": scene_idx, "shot_idx": shot_idx,
+            "visual_prompt": shot.visual_prompt,
+            "motion_prompt": shot.motion_prompt
         }
-        success = self.task_executor.execute_task("generate_chunk_video", task_data)
-        if success: st.toast(f"Video for Chunk {chunk_idx + 1} generated!", icon="📹")
-        else: st.error(f"Failed to generate video for Chunk {chunk_idx + 1}.")
+        success = self.task_executor.execute_task("generate_shot_video", task_data)
+        if success: st.toast(f"Video for Shot {shot_idx + 1} generated!", icon="📹")
+        else: st.error(f"Failed to generate video for Shot {shot_idx + 1}.")
         self.project_manager.load_project()
         return success
 
-    def regenerate_chunk_t2v(self, scene_idx: int, chunk_idx: int) -> bool:
+    def regenerate_shot_t2v(self, scene_idx: int, shot_idx: int) -> bool:
         if not self.task_executor: return False
-        self.project_manager.update_chunk_content(scene_idx, chunk_idx)
-        chunk = self.project_manager.get_scene_info(scene_idx).chunks[chunk_idx]
-        task_data = {"scene_idx": scene_idx, "chunk_idx": chunk_idx, "visual_prompt": chunk.visual_prompt}
-        success = self.task_executor.execute_task("generate_chunk_t2v", task_data)
-        if success: st.toast(f"T2V Chunk {chunk_idx + 1} generated!", icon="📹")
-        else: st.error(f"Failed to generate T2V Chunk {chunk_idx + 1}.")
+        self.project_manager.update_shot_content(scene_idx, shot_idx)
+        shot = self.project_manager.get_scene_info(scene_idx).shots[shot_idx]
+        task_data = {"scene_idx": scene_idx, "shot_idx": shot_idx, "visual_prompt": shot.visual_prompt}
+        success = self.task_executor.execute_task("generate_shot_t2v", task_data)
+        if success: st.toast(f"T2V Shot {shot_idx + 1} generated!", icon="📹")
+        else: st.error(f"Failed to generate T2V Shot {shot_idx + 1}.")
         self.project_manager.load_project()
         return success
             

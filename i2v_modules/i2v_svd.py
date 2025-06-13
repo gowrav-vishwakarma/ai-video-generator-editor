@@ -36,7 +36,7 @@ class SvdI2V(BaseI2V):
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (576, 1024), "Landscape": (1024, 576)},
-            "max_chunk_duration": 2.0 
+            "max_shot_duration": 2.0 
         }
         
     def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:
@@ -97,5 +97,5 @@ class SvdI2V(BaseI2V):
         ).frames[0]
 
         export_to_video(video_frames, output_video_path, fps=calculated_fps)
-        print(f"SVD video chunk saved to {output_video_path}")
+        print(f"SVD video shot saved to {output_video_path}")
         return output_video_path

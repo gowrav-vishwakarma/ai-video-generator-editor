@@ -28,7 +28,7 @@ class WanT2V(BaseT2V):
     def get_capabilities(cls) -> ModuleCapabilities:
         """Declare the capabilities of the Wan 2.1 model."""
         return ModuleCapabilities(
-            title="Wan 2.1 (1.3B, Fast, 5s Chunks)",
+            title="Wan 2.1 (1.3B, Fast, 5s Shots)",
             vram_gb_min=15.0, # Based on the 8.19 GB requirement from the model card
             ram_gb_min=12.0,
             supported_formats=["Portrait", "Landscape"],
@@ -46,7 +46,7 @@ class WanT2V(BaseT2V):
             # Based on the example: width=832, height=480
             "resolutions": {"Portrait": (480, 832), "Landscape": (832, 480)},
             # Based on the example: "generate a 5-second 480P video"
-            "max_chunk_duration": 5.0 
+            "max_shot_duration": 5.0 
         }
 
     def _load_pipeline(self):
@@ -85,7 +85,7 @@ class WanT2V(BaseT2V):
     def generate_video_from_text(
         self, prompt: str, output_video_path: str, num_frames: int, fps: int, width: int, height: int, ip_adapter_image: Optional[Union[str, List[str]]] = None
     ) -> str:
-        """Generates a video chunk using the Wan T2V pipeline."""
+        """Generates a video shot using the Wan T2V pipeline."""
         self._load_pipeline()
         
         # Gracefully handle the case where character images are passed to a non-supporting model.
@@ -113,5 +113,5 @@ class WanT2V(BaseT2V):
         # The system's config determines the final FPS, not the model's example
         export_to_video(video_frames, output_video_path, fps=fps)
         
-        print(f"Wan T2V video chunk saved to {output_video_path}")
+        print(f"Wan T2V video shot saved to {output_video_path}")
         return output_video_path

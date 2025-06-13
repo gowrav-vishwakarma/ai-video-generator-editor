@@ -43,7 +43,7 @@ class LtxT2V(BaseT2V):
         )
     
     def get_model_capabilities(self) -> Dict[str, Any]:
-        return {"resolutions": {"Portrait": (512, 768), "Landscape": (768, 512)}, "max_chunk_duration": 5.0}
+        return {"resolutions": {"Portrait": (512, 768), "Landscape": (768, 512)}, "max_shot_duration": 5.0}
 
     def _load_pipeline(self):
         if self.pipe is not None: return
@@ -116,5 +116,5 @@ class LtxT2V(BaseT2V):
         
         export_to_video(video_frames, output_video_path, fps=fps)
         
-        print(f"LTX T2V video chunk saved to {output_video_path}")
+        print(f"LTX T2V video shot saved to {output_video_path}")
         return output_video_path

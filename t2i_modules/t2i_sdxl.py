@@ -41,7 +41,7 @@ class SdxlT2I(BaseT2I):
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (896, 1152), "Landscape": (1344, 768)},
-            "max_chunk_duration": 3.0
+            "max_shot_duration": 3.0
         }
 
     def _load_pipeline(self):

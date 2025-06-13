@@ -371,9 +371,9 @@ def render_processing_dashboard():
 
     def add_scene_at_callback(index_to_add): st.session_state.ui_executor.add_new_scene(index_to_add)
     def remove_scene_callback(scene_idx_to_remove): st.session_state.ui_executor.remove_scene(scene_idx_to_remove)
-    def regen_chunks_callback(scene_idx_to_regen):
-        with st.spinner(f"Regenerating chunks for Scene {scene_idx_to_regen + 1}..."): 
-            st.session_state.ui_executor.regenerate_scene_chunks(scene_idx_to_regen)
+    def regen_shots_callback(scene_idx_to_regen):
+        with st.spinner(f"Regenerating shots for Scene {scene_idx_to_regen + 1}..."): 
+            st.session_state.ui_executor.regenerate_scene_shots(scene_idx_to_regen)
         st.rerun()
 
     supports_characters = ui_executor.task_executor.active_flow_supports_characters
@@ -540,47 +540,47 @@ def render_processing_dashboard():
             
             scene = project.get_scene_info(i)
             if scene:
-                chunks_header_c1, chunks_header_c2 = st.columns([0.75, 0.25])
-                with chunks_header_c1: st.subheader("Visual Chunks")
-                with chunks_header_c2: st.button("Regen Chunks", key=f"regen_chunks_{i}", on_click=regen_chunks_callback, args=(i,), disabled=st.session_state.is_processing, use_container_width=True, help="Regenerate all visual and motion prompts for this scene.")
+                shots_header_c1, shots_header_c2 = st.columns([0.75, 0.25])
+                with shots_header_c1: st.subheader("Visual Shots")
+                with shots_header_c2: st.button("Regen Shots", key=f"regen_shots_{i}", on_click=regen_shots_callback, args=(i,), disabled=st.session_state.is_processing, use_container_width=True, help="Regenerate all visual and motion prompts for this scene.")
                 
-                for chunk in scene.chunks:
-                    chunk_idx = chunk.chunk_idx
+                for shot in scene.shots:
+                    shot_idx = shot.shot_idx
                     with st.container(border=True):
                         if use_svd_flow:
                             p_col, i_col, v_col = st.columns([2, 1, 1])
                             with p_col:
-                                st.write(f"**Chunk {chunk_idx + 1}**")
-                                vis = st.text_area("Visual", chunk.visual_prompt, key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
-                                if vis != chunk.visual_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis)
-                                mot = st.text_area("Motion", chunk.motion_prompt, key=f"m_prompt_{i}_{chunk_idx}", height=75, disabled=st.session_state.is_processing)
-                                if mot != chunk.motion_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, motion_prompt=mot)
+                                st.write(f"**Shot {shot_idx + 1}**")
+                                vis = st.text_area("Visual", shot.visual_prompt, key=f"v_prompt_{i}_{shot_idx}", height=125, disabled=st.session_state.is_processing)
+                                if vis != shot.visual_prompt: ui_executor.update_shot_prompts(i, shot_idx, visual_prompt=vis)
+                                mot = st.text_area("Motion", shot.motion_prompt, key=f"m_prompt_{i}_{shot_idx}", height=75, disabled=st.session_state.is_processing)
+                                if mot != shot.motion_prompt: ui_executor.update_shot_prompts(i, shot_idx, motion_prompt=mot)
                             with i_col:
-                                st.write("**Image**"); has_image = chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path)
-                                if has_image: st.image(chunk.keyframe_image_path)
+                                st.write("**Image**"); has_image = shot.keyframe_image_path and os.path.exists(shot.keyframe_image_path)
+                                if has_image: st.image(shot.keyframe_image_path)
                                 else: st.info("Image pending...")
-                                if st.button("Regen Image" if has_image else "Gen Image", key=f"gen_img_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
-                                    with st.spinner("..."): ui_executor.regenerate_chunk_image(i, chunk_idx); st.rerun()
+                                if st.button("Regen Image" if has_image else "Gen Image", key=f"gen_img_{i}_{shot_idx}", disabled=st.session_state.is_processing, use_container_width=True):
+                                    with st.spinner("..."): ui_executor.regenerate_shot_image(i, shot_idx); st.rerun()
                             with v_col:
-                                st.write("**Video**"); has_video = chunk.video_path and os.path.exists(chunk.video_path)
-                                if has_video: st.video(chunk.video_path)
+                                st.write("**Video**"); has_video = shot.video_path and os.path.exists(shot.video_path)
+                                if has_video: st.video(shot.video_path)
                                 else: st.info("Video pending...")
-                                if st.button("Regen Video" if has_video else "Gen Video", key=f"gen_vid_{i}_{chunk_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
-                                    with st.spinner("..."): ui_executor.regenerate_chunk_video(i, chunk_idx); st.rerun()
+                                if st.button("Regen Video" if has_video else "Gen Video", key=f"gen_vid_{i}_{shot_idx}", disabled=st.session_state.is_processing or not has_image, use_container_width=True):
+                                    with st.spinner("..."): ui_executor.regenerate_shot_video(i, shot_idx); st.rerun()
                         else: # T2V Flow
                             p_col, v_col = st.columns([2, 1])
                             with p_col:
-                                st.write(f"**Chunk {chunk_idx + 1} Prompt**")
-                                vis = st.text_area("Prompt", chunk.visual_prompt, key=f"v_prompt_{i}_{chunk_idx}", height=125, disabled=st.session_state.is_processing)
-                                if vis != chunk.visual_prompt: ui_executor.update_chunk_prompts(i, chunk_idx, visual_prompt=vis)
+                                st.write(f"**Shot {shot_idx + 1} Prompt**")
+                                vis = st.text_area("Prompt", shot.visual_prompt, key=f"v_prompt_{i}_{shot_idx}", height=125, disabled=st.session_state.is_processing)
+                                if vis != shot.visual_prompt: ui_executor.update_shot_prompts(i, shot_idx, visual_prompt=vis)
                             with v_col:
-                                st.write("**Video**"); has_video = chunk.video_path and os.path.exists(chunk.video_path)
-                                if has_video: st.video(chunk.video_path)
+                                st.write("**Video**"); has_video = shot.video_path and os.path.exists(shot.video_path)
+                                if has_video: st.video(shot.video_path)
                                 else: st.info("Video pending...")
-                                if st.button("Regen Video" if has_video else "Gen Video", key=f"gen_t2v_{i}_{chunk_idx}", disabled=st.session_state.is_processing, use_container_width=True):
-                                    with st.spinner("..."): ui_executor.regenerate_chunk_t2v(i, chunk_idx); st.rerun()
+                                if st.button("Regen Video" if has_video else "Gen Video", key=f"gen_t2v_{i}_{shot_idx}", disabled=st.session_state.is_processing, use_container_width=True):
+                                    with st.spinner("..."): ui_executor.regenerate_shot_t2v(i, shot_idx); st.rerun()
             elif part.status == "generated":
-                 if st.button("Define Visual Chunks", key=f"create_scene_{i}", disabled=st.session_state.is_processing, use_container_width=True, help="Generates the visual and motion prompts for this scene based on its narration."):
+                 if st.button("Define Visual Shots", key=f"create_scene_{i}", disabled=st.session_state.is_processing, use_container_width=True, help="Generates the visual and motion prompts for this scene based on its narration."):
                     with st.spinner("..."): ui_executor.create_scene(i); st.rerun()
             else: st.info("Generate audio before scene creation.")
         
@@ -595,7 +595,7 @@ def render_processing_dashboard():
             st.session_state.is_processing = False; st.toast("✅ All tasks done!"); go_to_step('video_assembly')
         else:
             msg = f"Executing: {next_task_name.replace('_', ' ')} for Scene {next_task_data.get('scene_idx', 0) + 1}..."
-            if "chunk" in next_task_name: msg += f" / Chunk {next_task_data.get('chunk_idx', 0) + 1}"
+            if "shot" in next_task_name: msg += f" / Shot {next_task_data.get('shot_idx', 0) + 1}"
             with st.spinner(msg):
                 if next_task_name == 'generate_audio': next_task_data['speaker_wav'] = st.session_state.speaker_audio
                 success = st.session_state.ui_executor.task_executor.execute_task(next_task_name, next_task_data)

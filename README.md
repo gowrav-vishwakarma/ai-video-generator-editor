@@ -83,9 +83,9 @@ graph TD
     C --> D[Project Initialized - project.json];
     D --> E[Task: Generate Script LLM];
     E --> F[Task: Generate Audio TTS];
-    F --> G[Task: Create Scene Chunks - LLM];
+    F --> G[Task: Create Scene Shots - LLM];
 
-    subgraph "For Each Scene Chunk"
+    subgraph "For Each Scene Shot"
         direction LR
         G --> H{I2V or T2V Flow?};
         H -- I2V --> I[Task: Gen Image T2I];
@@ -93,7 +93,7 @@ graph TD
         H -- T2V --> K[Task: Gen Video T2V];
     end
 
-    J --> L[All Chunks Done?];
+    J --> L[All Shots Done?];
     K --> L;
 
     L -- Yes --> M[Task: Assemble Scene Videos];
@@ -298,7 +298,7 @@ def get_model_capabilities(self) -> Dict[str, Any]:
     """Return technical details about the model."""
     return {
         "resolutions": {"Portrait": (512, 768), "Landscape": (768, 512)},
-        "max_chunk_duration": 4.0 # Max video length it can generate at once
+        "max_shot_duration": 4.0 # Max video length it can generate at once
     }
 ```
 

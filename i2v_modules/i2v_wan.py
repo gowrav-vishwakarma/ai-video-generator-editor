@@ -44,7 +44,7 @@ class WanI2V(BaseI2V):
         """Return the specific resolutions and max duration for this model."""
         return {
             "resolutions": {"base_pixel_area": 399360},  # 480P model base area
-            "max_chunk_duration": 4.0
+            "max_shot_duration": 4.0
         }
 
     def _load_pipeline(self):
@@ -129,5 +129,5 @@ class WanI2V(BaseI2V):
         
         export_to_video(video_frames, output_video_path, fps=content_config.fps)
         
-        print(f"Wan I2V 14B video chunk saved to {output_video_path}")
+        print(f"Wan I2V 14B video shot saved to {output_video_path}")
         return output_video_path

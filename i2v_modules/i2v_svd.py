@@ -32,7 +32,7 @@ class SvdI2V(BaseI2V):
             accepts_negative_prompt=True
         )
 
-
+    @classmethod
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (576, 1024), "Landscape": (1024, 576)},

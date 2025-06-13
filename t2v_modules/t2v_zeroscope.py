@@ -39,6 +39,7 @@ class ZeroscopeT2V(BaseT2V):
         super().__init__(config)
         self.upscaler_pipe = None
 
+    @classmethod
     def get_model_capabilities(self) -> Dict[str, Any]:
         # Zeroscope has a fixed native resolution that is then upscaled
         base_resolution = (576, 320)

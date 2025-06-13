@@ -43,6 +43,7 @@ class JuggernautT2I(BaseT2I):
             accepts_negative_prompt=True
         )
 
+    @classmethod
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (832, 1216), "Landscape": (1216, 832)},

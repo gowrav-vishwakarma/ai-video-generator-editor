@@ -1,399 +1,112 @@
-# project_manager.py
+# In project_manager.py
 import os
-import time
 import logging
 import shutil
-from typing import Dict, List, Optional, Any, Tuple
-from pydantic import BaseModel, Field
+from typing import Optional, Any
+from uuid import UUID
 
-from config_manager import ContentConfig
+from config_manager import ProjectState, Character, CharacterVersion, Voice, Scene, Shot
 
 logger = logging.getLogger(__name__)
 
-STATUS_PENDING, STATUS_GENERATED, STATUS_COMPLETED, STATUS_FAILED, STATUS_IN_PROGRESS = "pending", "generated", "completed", "failed", "in_progress"
-STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED = "image_generated", "video_generated"
-
-# --- Pydantic Models for Project State ---
-
-class ProjectInfo(BaseModel):
-    title: str
-    topic: str
-    created_at: float = Field(default_factory=time.time)
-    last_modified: float = Field(default_factory=time.time)
-    status: str = STATUS_IN_PROGRESS
-    config: Dict[str, Any]
-    speaker_audio_path: Optional[str] = None # Stores the relative path within the project dir
-
-class NarrationPart(BaseModel):
-    text: str
-    status: str = STATUS_PENDING
-    audio_path: str = ""
-    duration: float = 0.0
-
-class VisualPrompt(BaseModel):
-    prompt: str
-
-class Script(BaseModel):
-    # NEW: Fields for consistent context
-    main_subject_description: str = ""
-    setting_description: str = ""
-    
-    narration_parts: List[NarrationPart] = Field(default_factory=list)
-    visual_prompts: List[VisualPrompt] = Field(default_factory=list)
-    hashtags: List[str] = Field(default_factory=list)
-
-class Character(BaseModel):
-    """Represents a character/subject in the project."""
-    name: str
-    reference_image_path: str
-    source_prompt: Optional[str] = None
-    source_image_path: Optional[str] = None # Path to the user-uploaded image
-
-
-class Shot(BaseModel):
-    shot_idx: int
-    target_duration: float
-    visual_prompt: str
-    motion_prompt: Optional[str] = ""
-    status: str = STATUS_PENDING
-    keyframe_image_path: str = ""
-    video_path: str = ""
-
-class Scene(BaseModel):
-    scene_idx: int
-    status: str = STATUS_PENDING
-    assembled_video_path: str = ""
-    shots: List[Shot] = Field(default_factory=list)
-    character_names: List[str] = Field(default_factory=list)
-
-class FinalVideo(BaseModel):
-    status: str = STATUS_PENDING
-    path: str = ""
-    full_narration_text: str = ""
-    hashtags: List[str] = Field(default_factory=list)
-
-class ProjectState(BaseModel):
-    project_info: ProjectInfo
-    script: Script = Field(default_factory=Script)
-    characters: List[Character] = Field(default_factory=list)
-    scenes: List[Scene] = Field(default_factory=list)
-    final_video: FinalVideo = Field(default_factory=FinalVideo)
-
-# --- ProjectManager Class ---
+def _safe_remove(path: Optional[str]):
+    if path and os.path.exists(path):
+        try: os.remove(path)
+        except OSError as e: logger.error(f"Error removing file {path}: {e}")
 
 class ProjectManager:
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
-        self.project_file = os.path.join(output_dir, "project.json")
+        self.project_file = os.path.join(output_dir, "project_state.json")
         self.state: Optional[ProjectState] = None
         os.makedirs(self.output_dir, exist_ok=True)
         
+    # --- REVERTED TO SIMPLE SAVE ---
     def _save_state(self):
+        """Saves the current in-memory state to the project file."""
         if not self.state: return
-        self.state.project_info.last_modified = time.time()
-        with open(self.project_file, 'w') as f:
-            f.write(self.state.model_dump_json(indent=4))
+        with open(self.project_file, 'w', encoding='utf-8') as f:
+            f.write(self.state.model_dump_json(indent=2))
+    # --- END OF REVERT ---
             
-    def initialize_project(self, title: str, topic: str, config: ContentConfig):
-        project_info = ProjectInfo(title=title, topic=topic, config=config.model_dump())
-        self.state = ProjectState(project_info=project_info)
+    def initialize_project(self, title: str, video_format: str):
+        self.state = ProjectState(title=title, video_format=video_format)
         self._save_state()
     
-    def set_speaker_audio(self, relative_path: str):
-        """Saves the relative path of the speaker audio to the project state."""
-        if not self.state: return
-        self.state.project_info.speaker_audio_path = relative_path
-        self._save_state()
-        
     def load_project(self) -> bool:
         if not os.path.exists(self.project_file): return False
         try:
-            with open(self.project_file, 'r') as f:
+            with open(self.project_file, 'r', encoding='utf-8') as f:
                 self.state = ProjectState.model_validate_json(f.read())
+            needs_save = False
+            if not hasattr(self.state, 'add_narration_text_to_video'): self.state.add_narration_text_to_video = True; needs_save = True
+            for i, scene in enumerate(self.state.scenes):
+                if not hasattr(scene, 'title'): scene.title = f"Scene {i + 1}"; needs_save = True
+                for shot in scene.shots:
+                    if not hasattr(shot, 'generation_flow'): shot.generation_flow = "T2I_I2V"; needs_save = True
+                    if not hasattr(shot, 'uploaded_image_path'): shot.uploaded_image_path = None; needs_save = True
+            if needs_save: logger.warning(f"Upgraded old project format: '{self.state.title}'"); self._save_state()
             return True
         except Exception as e:
-            logger.error(f"Error loading project with Pydantic: {e}", exc_info=True); return False
+            logger.error(f"Error loading or migrating project: {e}", exc_info=True); return False
 
-    def update_script(self, script_data: Dict[str, Any]):
-        if not self.state: return
-        self.state.script.main_subject_description = script_data.get("main_subject_description", "")
-        self.state.script.setting_description = script_data.get("setting_description", "")
-        self.state.script.narration_parts = [NarrationPart(**p) for p in script_data.get("narration", [])]
-        self.state.script.visual_prompts = [VisualPrompt(prompt=p) for p in script_data.get("visuals", [])]
-        self.state.script.hashtags = script_data.get("hashtags", [])
-        self._save_state()
-
-    def get_next_pending_task(self) -> Tuple[Optional[str], Optional[Dict]]:
-        if not self.state: return None, None
-        
-        cfg = ContentConfig(**self.state.project_info.config)
-        use_svd_flow = cfg.use_svd_flow
-
-        if not self.state.script.narration_parts: return "generate_script", {"topic": self.state.project_info.topic}
-        
-        for i, part in enumerate(self.state.script.narration_parts):
-            if part.status != STATUS_GENERATED: return "generate_audio", {"scene_idx": i, "text": part.text}
-        
-        narration_indices_with_scenes = {s.scene_idx for s in self.state.scenes}
-        for i in range(len(self.state.script.narration_parts)):
-            if i not in narration_indices_with_scenes: return "create_scene", {"scene_idx": i}
-
-        for scene in sorted(self.state.scenes, key=lambda s: s.scene_idx):
-            for shot in sorted(scene.shots, key=lambda c: c.shot_idx):
-                if shot.status != STATUS_VIDEO_GENERATED:
-                    task_data = { "scene_idx": scene.scene_idx, "shot_idx": shot.shot_idx, "visual_prompt": shot.visual_prompt, "motion_prompt": shot.motion_prompt}
-                    if use_svd_flow:
-                        if shot.status == STATUS_PENDING: return "generate_shot_image", task_data
-                        if shot.status == STATUS_IMAGE_GENERATED: return "generate_shot_video", task_data
-                    else: # T2V Flow
-                        return "generate_shot_t2v", task_data
-
-        for scene in self.state.scenes:
-            if all(c.status == STATUS_VIDEO_GENERATED for c in scene.shots) and scene.status != STATUS_COMPLETED:
-                return "assemble_scene", {"scene_idx": scene.scene_idx}
-        
-        if self.state.scenes and all(s.status == STATUS_COMPLETED for s in self.state.scenes) and self.state.final_video.status != STATUS_GENERATED:
-            return "assemble_final", {}
-            
-        return None, None
-
-    def update_narration_part_text(self, part_idx: int, text: str):
-        if not self.state or part_idx >= len(self.state.script.narration_parts): return
-        part = self.state.script.narration_parts[part_idx]
-        if part.text != text:
-            part.text = text; part.status = STATUS_PENDING; part.audio_path = ""; part.duration = 0
-            self.state.scenes = [s for s in self.state.scenes if s.scene_idx != part_idx]
-            self._mark_final_for_reassembly()
-            self._save_state()
-
-    def add_scene(self, scene_idx: int, shots: List[Dict], character_names: List[str]):
-        """Adds a new scene and assigns the provided characters to it."""
-        if not self.state: return
-        scene_data = Scene(
-            scene_idx=scene_idx, 
-            shots=[Shot(**c) for c in shots],
-            character_names=character_names
-        )
-        self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
-        self.state.scenes.append(scene_data)
-        self.state.scenes.sort(key=lambda s: s.scene_idx)
-        self._save_state()
-
-    def update_shot_content(self, scene_idx: int, shot_idx: int, visual_prompt: Optional[str] = None, motion_prompt: Optional[str] = None):
-        scene = self.get_scene_info(scene_idx)
-        if not scene or shot_idx >= len(scene.shots): return
-        shot = scene.shots[shot_idx]
-        changed = False
-        if visual_prompt is not None and shot.visual_prompt != visual_prompt:
-            shot.visual_prompt = visual_prompt; changed = True
-        if motion_prompt is not None and shot.motion_prompt != motion_prompt:
-            shot.motion_prompt = motion_prompt; changed = True
-        if changed:
-            shot.status = STATUS_PENDING; shot.keyframe_image_path = ""; shot.video_path = ""
-            self._mark_scene_for_reassembly(scene_idx)
-            self._save_state()
-            
-    def _mark_scene_for_reassembly(self, scene_idx: int):
-        scene = self.get_scene_info(scene_idx)
-        if scene and scene.status == STATUS_COMPLETED:
-            scene.status = STATUS_PENDING; scene.assembled_video_path = ""
-            self._mark_final_for_reassembly()
-
-    def _mark_final_for_reassembly(self):
-        if self.state and self.state.final_video.status == STATUS_GENERATED:
-            self.state.final_video.status = STATUS_PENDING; self.state.final_video.path = ""
-            self.state.project_info.status = STATUS_IN_PROGRESS
+    def get_scene(self, uuid: UUID) -> Optional[Scene]: return next((s for s in self.state.scenes if s.uuid == uuid), None)
+    def get_shot(self, scene_uuid: UUID, shot_uuid: UUID) -> Optional[Shot]:
+        scene = self.get_scene(scene_uuid); return next((s for s in scene.shots if s.uuid == shot_uuid), None) if scene else None
+    def get_character(self, uuid: UUID) -> Optional[Character]: return next((c for c in self.state.characters if c.uuid == uuid), None)
+    def get_voice(self, uuid: UUID) -> Optional[Voice]: return next((v for v in self.state.voices if v.uuid == uuid), None)
     
-    def get_scene_info(self, scene_idx: int) -> Optional[Scene]:
-        if not self.state: return None
-        return next((s for s in self.state.scenes if s.scene_idx == scene_idx), None)
-
-    def update_narration_part_status(self, part_idx: int, status: str, audio_path: str = "", duration: float = 0.0):
-        if not self.state or part_idx >= len(self.state.script.narration_parts): return
-        part = self.state.script.narration_parts[part_idx]
-        part.status = status; part.audio_path = audio_path; part.duration = duration
-        self._save_state()
-
-    def update_shot_status(self, scene_idx, shot_idx, status, keyframe_path=None, video_path=None):
-        scene = self.get_scene_info(scene_idx)
-        if not scene or shot_idx >= len(scene.shots): return
-        shot = scene.shots[shot_idx]
-        shot.status = status
-        if keyframe_path: shot.keyframe_image_path = keyframe_path
-        if video_path: shot.video_path = video_path
-        self._save_state()
-
-    def update_scene_status(self, scene_idx, status, assembled_video_path=None):
-        scene = self.get_scene_info(scene_idx)
-        if not scene: return
-        scene.status = status
-        if assembled_video_path: scene.assembled_video_path = assembled_video_path
-        self._save_state()
-        
-    def update_final_video(self, path, status, full_narration_text, hashtags):
+    def _cleanup_shot_files(self, shot: Shot):
+        _safe_remove(shot.keyframe_image_path); _safe_remove(shot.video_path); _safe_remove(shot.uploaded_image_path)
+        shot_dir = os.path.join(self.output_dir, "shots", str(shot.uuid))
+        if os.path.isdir(shot_dir):
+            try: shutil.rmtree(shot_dir)
+            except OSError as e: logger.error(f"Error removing shot directory {shot_dir}: {e}")
+            
+    def delete_scene(self, scene_uuid: UUID):
         if not self.state: return
-        self.state.final_video.path = path
-        self.state.final_video.status = status
-        self.state.final_video.full_narration_text = full_narration_text
-        self.state.final_video.hashtags = hashtags
-        if status == "generated": self.state.project_info.status = "completed"
-        self._save_state()
-    
-    def add_character(self, character_data: Dict[str, Any]):
-        if not self.state: return
-        char = Character(**character_data)
-        self.state.characters = [c for c in self.state.characters if c.name != char.name]
-        self.state.characters.append(char)
-        self._save_state()
-
-    def update_config_value(self, key: str, value: Any):
-        """Updates a specific key in the project's ContentConfig."""
-        if not self.state: return
-        
-        if key in ContentConfig.model_fields:
-            config_dict = self.state.project_info.config
-            if config_dict.get(key) != value:
-                config_dict[key] = value
-                self._mark_final_for_reassembly() # If assembly setting changes, reassembly is needed
-                self._save_state()
-                logger.info(f"Updated project config: set {key} to {value}")
-        else:
-            logger.warning(f"Warning: Attempted to update an unknown config key: {key}")
-
-    def update_character(self, old_name: str, new_name: str, new_reference_image_path: Optional[str]):
-        char = self.get_character(old_name)
-        if not char: return
-
-        image_changed = new_reference_image_path and char.reference_image_path != new_reference_image_path
-        name_changed = new_name and char.name != new_name
-
-        if image_changed:
-            char.reference_image_path = new_reference_image_path
-            self._reset_visuals_for_character(old_name)
-
-        if name_changed:
-            char.name = new_name
-            self._update_scene_references_on_name_change(old_name, new_name)
-        
-        self._save_state()
-
-    def delete_character(self, name: str):
-        if not self.state: return
-        self.state.characters = [c for c in self.state.characters if c.name != name]
-        for scene in self.state.scenes:
-            if name in scene.character_names:
-                scene.character_names.remove(name)
-        
-        safe_name = name.replace(" ", "_")
-        char_dir = os.path.join(self.output_dir, "characters", safe_name)
-        if os.path.exists(char_dir):
-            shutil.rmtree(char_dir)
-            logger.info(f"Removed character asset directory: {char_dir}")
-
-        self._save_state()
-        
-    def _reset_visuals_for_character(self, character_name: str):
-        logger.info(f"Resetting visuals for scenes containing character: {character_name}")
-        for scene in self.state.scenes:
-            if character_name in scene.character_names:
-                for shot in scene.shots:
-                    shot.status = STATUS_PENDING
-                    shot.keyframe_image_path = ""
-                    shot.video_path = ""
-                scene.status = STATUS_PENDING
-                scene.assembled_video_path = ""
-        self._mark_final_for_reassembly()
-        
-    def _update_scene_references_on_name_change(self, old_name: str, new_name: str):
-        for scene in self.state.scenes:
-            if old_name in scene.character_names:
-                scene.character_names = [new_name if name == old_name else name for name in scene.character_names]
-
-    def get_character(self, name: str) -> Optional[Character]:
-        if not self.state: return None
-        return next((c for c in self.state.characters if c.name == name), None)
-        
-    def update_scene_characters(self, scene_idx: int, character_names: List[str]):
-        scene = self.get_scene_info(scene_idx)
+        scene_to_delete = self.get_scene(scene_uuid)
+        if scene_to_delete:
+            for shot in scene_to_delete.shots: self._cleanup_shot_files(shot)
+            _safe_remove(scene_to_delete.assembled_video_path); _safe_remove(scene_to_delete.narration.audio_path)
+        self.state.scenes = [s for s in self.state.scenes if s.uuid != scene_uuid]; self._save_state()
+            
+    def delete_shot(self, scene_uuid: UUID, shot_uuid: UUID):
+        scene = self.get_scene(scene_uuid)
         if scene:
-            scene.character_names = character_names
-            self._save_state()
-
-    def add_new_scene_at(self, scene_idx: int, narration_text: str = "New scene narration.", visual_prompt: str = "A vibrant new scene."):
-        if not self.state: return
-        logger.info(f"Adding new scene at index {scene_idx}")
-
-        new_narration = NarrationPart(text=narration_text)
-        new_visual = VisualPrompt(prompt=visual_prompt)
-        self.state.script.narration_parts.insert(scene_idx, new_narration)
-        self.state.script.visual_prompts.insert(scene_idx, new_visual)
-
-        for i in range(len(self.state.scenes) - 1, -1, -1):
-            scene = self.state.scenes[i]
-            if scene.scene_idx >= scene_idx:
-                scene.scene_idx += 1
-        
-        self._mark_final_for_reassembly()
-        self._save_state()
+            shot_to_delete = next((s for s in scene.shots if s.uuid == shot_uuid), None)
+            if shot_to_delete: self._cleanup_shot_files(shot_to_delete)
+            scene.shots = [s for s in scene.shots if s.uuid != shot_uuid]; self._save_state()
     
-    # --- NEW METHOD ---
-    def reset_scene_for_shot_regeneration(self, scene_idx: int):
-        """Deletes a scene's assets and state, preparing it for shot regeneration."""
+    def add_character(self, name: str, base_image_path: str):
+        char = Character(name=name); version = CharacterVersion(name="base", reference_image_path=base_image_path); char.versions.append(version)
+        self.state.characters.append(char); self._save_state()
+    def add_voice(self, name: str, module_path: str, wav_path: str):
+        voice = Voice(name=name, tts_module_path=module_path, reference_wav_path=wav_path); self.state.voices.append(voice); self._save_state()
+    def add_scene(self):
         if not self.state: return
-        
-        scene_to_reset = self.get_scene_info(scene_idx)
-        if not scene_to_reset:
-            logger.warning(f"No scene found at index {scene_idx} to reset.")
-            return
-
-        logger.info(f"Resetting Scene {scene_idx} for shot regeneration.")
-        # Delete physical assets associated with the scene's shots
-        for shot in scene_to_reset.shots:
-            if shot.keyframe_image_path and os.path.exists(shot.keyframe_image_path):
-                try: os.remove(shot.keyframe_image_path)
-                except OSError as e: logger.error(f"Error removing keyframe image {shot.keyframe_image_path}: {e}")
-            if shot.video_path and os.path.exists(shot.video_path):
-                try: os.remove(shot.video_path)
-                except OSError as e: logger.error(f"Error removing shot video {shot.video_path}: {e}")
-        
-        # Delete the assembled scene video if it exists
-        if scene_to_reset.assembled_video_path and os.path.exists(scene_to_reset.assembled_video_path):
-            try: os.remove(scene_to_reset.assembled_video_path)
-            except OSError as e: logger.error(f"Error removing assembled scene video {scene_to_reset.assembled_video_path}: {e}")
-
-        # Remove the Scene object from the state
-        self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
-        
-        # Mark the final video for reassembly
-        self._mark_final_for_reassembly()
-        self._save_state()
-
-
-    def remove_scene_at(self, scene_idx: int):
-        if not self.state or scene_idx >= len(self.state.script.narration_parts): return
-        logger.info(f"Removing scene at index {scene_idx}")
-
-        del self.state.script.narration_parts[scene_idx]
-        del self.state.script.visual_prompts[scene_idx]
-
-        scene_to_remove = self.get_scene_info(scene_idx)
-        if scene_to_remove:
-            base_dir = self.output_dir
-            audio_path = os.path.join(base_dir, f"scene_{scene_idx}_audio.wav")
-            if os.path.exists(audio_path): os.remove(audio_path)
-            assembled_path = os.path.join(base_dir, f"scene_{scene_idx}_assembled_video.mp4")
-            if os.path.exists(assembled_path): os.remove(assembled_path)
-            for shot in scene_to_remove.shots:
-                if shot.keyframe_image_path and os.path.exists(shot.keyframe_image_path):
-                    os.remove(shot.keyframe_image_path)
-                if shot.video_path and os.path.exists(shot.video_path):
-                    os.remove(shot.video_path)
-            
-            self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
-
-        for scene in self.state.scenes:
-            if scene.scene_idx > scene_idx:
-                scene.scene_idx -= 1
-        
-        self._mark_final_for_reassembly()
-        self._save_state()
+        self.state.scenes.append(Scene(title=f"Scene {len(self.state.scenes) + 1}")); self._save_state()
+    def add_shot_to_scene(self, scene_uuid: UUID):
+        scene = self.get_scene(scene_uuid)
+        if scene:
+            new_shot = Shot()
+            if scene.shots:
+                last_shot = scene.shots[-1]; new_shot.generation_flow = last_shot.generation_flow; new_shot.module_selections = last_shot.module_selections.copy()
+            scene.shots.append(new_shot); self._save_state()
+    def update_scene(self, scene_uuid: UUID, data: dict):
+        scene = self.get_scene(scene_uuid)
+        if scene:
+            if 'title' in data: scene.title = data['title']
+            if 'narration_text' in data: scene.narration.text = data['narration_text']; scene.narration.status = "pending"; scene.narration.audio_path = None
+            if 'voice_uuid' in data: scene.narration.voice_uuid = data['voice_uuid']; scene.narration.status = "pending"
+            self._save_state()
+    def update_shot(self, scene_uuid: UUID, shot_uuid: UUID, data: dict):
+        shot = self.get_shot(scene_uuid, shot_uuid)
+        if shot:
+            changed = False
+            for key, value in data.items():
+                if hasattr(shot, key) and getattr(shot, key) != value: setattr(shot, key, value); changed = True
+            if changed: shot.status = "pending"; shot.keyframe_image_path = None; shot.video_path = None
+            self._save_state()
+    def update_final_video_path(self, path: Optional[str]):
+        if self.state: self.state.final_video_path = path; self.state.status = "completed" if path else "in_progress"; self._save_state()

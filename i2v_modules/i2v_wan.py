@@ -40,6 +40,7 @@ class WanI2V(BaseI2V):
             accepts_negative_prompt=True
         )
 
+    @classmethod
     def get_model_capabilities(self) -> Dict[str, Any]:
         """Return the specific resolutions and max duration for this model."""
         return {

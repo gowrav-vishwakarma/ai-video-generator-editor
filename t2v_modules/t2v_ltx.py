@@ -42,6 +42,7 @@ class LtxT2V(BaseT2V):
             accepts_negative_prompt=True
         )
     
+    @classmethod
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {"resolutions": {"Portrait": (512, 768), "Landscape": (768, 512)}, "max_shot_duration": 5.0}
 

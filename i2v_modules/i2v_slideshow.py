@@ -31,6 +31,7 @@ class SlideshowI2V(BaseI2V):
             accepts_negative_prompt=False
         )
 
+    @classmethod
     def get_model_capabilities(self) -> Dict[str, Any]:
         """
         This module has no native resolution and can handle long durations.

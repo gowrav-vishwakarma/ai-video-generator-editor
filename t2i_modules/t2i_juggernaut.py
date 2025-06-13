@@ -46,7 +46,7 @@ class JuggernautT2I(BaseT2I):
     def get_model_capabilities(self) -> Dict[str, Any]:
         return {
             "resolutions": {"Portrait": (832, 1216), "Landscape": (1216, 832)},
-            "max_chunk_duration": 3.0 
+            "max_shot_duration": 3.0 
         }
 
     def enhance_prompt(self, prompt: str, prompt_type: str = "visual") -> str:

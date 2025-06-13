@@ -29,6 +29,49 @@ An extensible, modular pipeline for generating short-form videos using a variety
 -   **Multi-Language Voice Generation**: Generate narration in over 15 languages (including English, Spanish, French, German, Japanese, Hindi, and more) using advanced TTS models.
 -   **Voice Cloning**: Provide a short `.wav` file of a reference voice to clone it for the video's narration, powered by Coqui XTTS.
 
+## Future Development Plans
+
+### TODO List
+
+1. **Text-to-Music (TTM) Modules**
+   - Background music generation for videos
+   - Pure music production capabilities
+   - Integration with existing video pipeline
+
+2. **Additional Model Support**
+   - FramePack and other advanced video generation models
+   - Enhanced model compatibility and optimization
+   - Lora (Low-Rank Adaptation) support for fine-tuning models
+   - Custom Lora training and management interface
+   - ControlNet integration for pose, depth, and style control
+   - Advanced ControlNet features (canny, segmentation, etc.)
+
+3. **Character Consistency Features**
+   - Lora-based character consistency across scenes
+   - Character style preservation and transfer
+   - Multi-character management system
+   - Character pose and expression control
+
+4. **Advanced Editing Features**
+   - Multilayer timeline style editor
+   - Professional-grade video editing capabilities
+   - Enhanced control over transitions and effects
+
+5. **UI/UX Improvements**
+   - Migration to FastAPI backend
+   - Modern frontend with React/Vue
+   - Enhanced user experience and performance
+
+6. **Production Infrastructure**
+   - Distributed model serving system
+   - Load balancing across multiple GPUs/servers
+   - Model caching and optimization
+   - User quota and resource management
+   - Queue management for multiple users
+   - Real-time progress tracking and status updates
+   - Automatic failover and recovery
+   - Resource usage analytics and monitoring
+
 ## Architectural Overview
 
 The pipeline follows a state-driven, sequential process. The `ProjectManager` tracks the status of every task in a `project.json` file. The `TaskExecutor` then reads this state and executes the next pending task using the specific modules you selected for the project.
@@ -40,9 +83,9 @@ graph TD
     C --> D[Project Initialized - project.json];
     D --> E[Task: Generate Script LLM];
     E --> F[Task: Generate Audio TTS];
-    F --> G[Task: Create Scene Chunks - LLM];
+    F --> G[Task: Create Scene Shots - LLM];
 
-    subgraph "For Each Scene Chunk"
+    subgraph "For Each Scene Shot"
         direction LR
         G --> H{I2V or T2V Flow?};
         H -- I2V --> I[Task: Gen Image T2I];
@@ -50,7 +93,7 @@ graph TD
         H -- T2V --> K[Task: Gen Video T2V];
     end
 
-    J --> L[All Chunks Done?];
+    J --> L[All Shots Done?];
     K --> L;
 
     L -- Yes --> M[Task: Assemble Scene Videos];
@@ -100,7 +143,7 @@ source .venv/bin/activate
 .venv\Scripts\activate
 
 # Install all packages using the provided command
-uv pip install torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy "huggingface-hub[cli]" hf-transfer accelerate bitsandbytes pydantic --no-build-package llvmlite
+uv pip install torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy psutil gputil ftfy "huggingface-hub[cli]" hf-transfer accelerate bitsandbytes pydantic --no-build-package llvmlite
 ```
 > **Note:** The `--no-build-package llvmlite` flag is included to prevent `uv` from trying to build the `llvmlite` package from source, which can fail without the proper LLVM toolchain. This forces it to use a pre-compiled wheel.
 
@@ -255,7 +298,7 @@ def get_model_capabilities(self) -> Dict[str, Any]:
     """Return technical details about the model."""
     return {
         "resolutions": {"Portrait": (512, 768), "Landscape": (768, 512)},
-        "max_chunk_duration": 4.0 # Max video length it can generate at once
+        "max_shot_duration": 4.0 # Max video length it can generate at once
     }
 ```
 
@@ -298,3 +341,13 @@ from .i2v_motion_weaver import MotionWeaverI2V # <-- Add this line
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+### Important Notice Regarding Model Licenses
+
+While this project itself is MIT-licensed, the AI models used within this pipeline (including but not limited to language models, text-to-speech models, image generation models, and video generation models) are subject to their own respective licenses. Users of this project are responsible for:
+
+1. Reviewing and complying with the license terms of each model they choose to use
+2. Ensuring they have the necessary rights and permissions to use these models
+3. Understanding that different models may have different usage restrictions, commercial terms, and attribution requirements
+
+The MIT license of this project does not override or modify the license terms of any third-party models. Users must independently verify and comply with all applicable model licenses before use.

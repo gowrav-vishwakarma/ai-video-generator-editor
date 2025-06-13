@@ -16,6 +16,7 @@ STATUS_IMAGE_GENERATED, STATUS_VIDEO_GENERATED = "image_generated", "video_gener
 # --- Pydantic Models for Project State ---
 
 class ProjectInfo(BaseModel):
+    title: str
     topic: str
     created_at: float = Field(default_factory=time.time)
     last_modified: float = Field(default_factory=time.time)
@@ -49,8 +50,8 @@ class Character(BaseModel):
     source_image_path: Optional[str] = None # Path to the user-uploaded image
 
 
-class Chunk(BaseModel):
-    chunk_idx: int
+class Shot(BaseModel):
+    shot_idx: int
     target_duration: float
     visual_prompt: str
     motion_prompt: Optional[str] = ""
@@ -62,7 +63,7 @@ class Scene(BaseModel):
     scene_idx: int
     status: str = STATUS_PENDING
     assembled_video_path: str = ""
-    chunks: List[Chunk] = Field(default_factory=list)
+    shots: List[Shot] = Field(default_factory=list)
     character_names: List[str] = Field(default_factory=list)
 
 class FinalVideo(BaseModel):
@@ -93,8 +94,8 @@ class ProjectManager:
         with open(self.project_file, 'w') as f:
             f.write(self.state.model_dump_json(indent=4))
             
-    def initialize_project(self, topic: str, config: ContentConfig):
-        project_info = ProjectInfo(topic=topic, config=config.model_dump())
+    def initialize_project(self, title: str, topic: str, config: ContentConfig):
+        project_info = ProjectInfo(title=title, topic=topic, config=config.model_dump())
         self.state = ProjectState(project_info=project_info)
         self._save_state()
     
@@ -138,17 +139,17 @@ class ProjectManager:
             if i not in narration_indices_with_scenes: return "create_scene", {"scene_idx": i}
 
         for scene in sorted(self.state.scenes, key=lambda s: s.scene_idx):
-            for chunk in sorted(scene.chunks, key=lambda c: c.chunk_idx):
-                if chunk.status != STATUS_VIDEO_GENERATED:
-                    task_data = { "scene_idx": scene.scene_idx, "chunk_idx": chunk.chunk_idx, "visual_prompt": chunk.visual_prompt, "motion_prompt": chunk.motion_prompt}
+            for shot in sorted(scene.shots, key=lambda c: c.shot_idx):
+                if shot.status != STATUS_VIDEO_GENERATED:
+                    task_data = { "scene_idx": scene.scene_idx, "shot_idx": shot.shot_idx, "visual_prompt": shot.visual_prompt, "motion_prompt": shot.motion_prompt}
                     if use_svd_flow:
-                        if chunk.status == STATUS_PENDING: return "generate_chunk_image", task_data
-                        if chunk.status == STATUS_IMAGE_GENERATED: return "generate_chunk_video", task_data
+                        if shot.status == STATUS_PENDING: return "generate_shot_image", task_data
+                        if shot.status == STATUS_IMAGE_GENERATED: return "generate_shot_video", task_data
                     else: # T2V Flow
-                        return "generate_chunk_t2v", task_data
+                        return "generate_shot_t2v", task_data
 
         for scene in self.state.scenes:
-            if all(c.status == STATUS_VIDEO_GENERATED for c in scene.chunks) and scene.status != STATUS_COMPLETED:
+            if all(c.status == STATUS_VIDEO_GENERATED for c in scene.shots) and scene.status != STATUS_COMPLETED:
                 return "assemble_scene", {"scene_idx": scene.scene_idx}
         
         if self.state.scenes and all(s.status == STATUS_COMPLETED for s in self.state.scenes) and self.state.final_video.status != STATUS_GENERATED:
@@ -165,12 +166,12 @@ class ProjectManager:
             self._mark_final_for_reassembly()
             self._save_state()
 
-    def add_scene(self, scene_idx: int, chunks: List[Dict], character_names: List[str]):
+    def add_scene(self, scene_idx: int, shots: List[Dict], character_names: List[str]):
         """Adds a new scene and assigns the provided characters to it."""
         if not self.state: return
         scene_data = Scene(
             scene_idx=scene_idx, 
-            chunks=[Chunk(**c) for c in chunks],
+            shots=[Shot(**c) for c in shots],
             character_names=character_names
         )
         self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
@@ -178,17 +179,17 @@ class ProjectManager:
         self.state.scenes.sort(key=lambda s: s.scene_idx)
         self._save_state()
 
-    def update_chunk_content(self, scene_idx: int, chunk_idx: int, visual_prompt: Optional[str] = None, motion_prompt: Optional[str] = None):
+    def update_shot_content(self, scene_idx: int, shot_idx: int, visual_prompt: Optional[str] = None, motion_prompt: Optional[str] = None):
         scene = self.get_scene_info(scene_idx)
-        if not scene or chunk_idx >= len(scene.chunks): return
-        chunk = scene.chunks[chunk_idx]
+        if not scene or shot_idx >= len(scene.shots): return
+        shot = scene.shots[shot_idx]
         changed = False
-        if visual_prompt is not None and chunk.visual_prompt != visual_prompt:
-            chunk.visual_prompt = visual_prompt; changed = True
-        if motion_prompt is not None and chunk.motion_prompt != motion_prompt:
-            chunk.motion_prompt = motion_prompt; changed = True
+        if visual_prompt is not None and shot.visual_prompt != visual_prompt:
+            shot.visual_prompt = visual_prompt; changed = True
+        if motion_prompt is not None and shot.motion_prompt != motion_prompt:
+            shot.motion_prompt = motion_prompt; changed = True
         if changed:
-            chunk.status = STATUS_PENDING; chunk.keyframe_image_path = ""; chunk.video_path = ""
+            shot.status = STATUS_PENDING; shot.keyframe_image_path = ""; shot.video_path = ""
             self._mark_scene_for_reassembly(scene_idx)
             self._save_state()
             
@@ -213,13 +214,13 @@ class ProjectManager:
         part.status = status; part.audio_path = audio_path; part.duration = duration
         self._save_state()
 
-    def update_chunk_status(self, scene_idx, chunk_idx, status, keyframe_path=None, video_path=None):
+    def update_shot_status(self, scene_idx, shot_idx, status, keyframe_path=None, video_path=None):
         scene = self.get_scene_info(scene_idx)
-        if not scene or chunk_idx >= len(scene.chunks): return
-        chunk = scene.chunks[chunk_idx]
-        chunk.status = status
-        if keyframe_path: chunk.keyframe_image_path = keyframe_path
-        if video_path: chunk.video_path = video_path
+        if not scene or shot_idx >= len(scene.shots): return
+        shot = scene.shots[shot_idx]
+        shot.status = status
+        if keyframe_path: shot.keyframe_image_path = keyframe_path
+        if video_path: shot.video_path = video_path
         self._save_state()
 
     def update_scene_status(self, scene_idx, status, assembled_video_path=None):
@@ -295,10 +296,10 @@ class ProjectManager:
         logger.info(f"Resetting visuals for scenes containing character: {character_name}")
         for scene in self.state.scenes:
             if character_name in scene.character_names:
-                for chunk in scene.chunks:
-                    chunk.status = STATUS_PENDING
-                    chunk.keyframe_image_path = ""
-                    chunk.video_path = ""
+                for shot in scene.shots:
+                    shot.status = STATUS_PENDING
+                    shot.keyframe_image_path = ""
+                    shot.video_path = ""
                 scene.status = STATUS_PENDING
                 scene.assembled_video_path = ""
         self._mark_final_for_reassembly()
@@ -336,8 +337,8 @@ class ProjectManager:
         self._save_state()
     
     # --- NEW METHOD ---
-    def reset_scene_for_chunk_regeneration(self, scene_idx: int):
-        """Deletes a scene's assets and state, preparing it for chunk regeneration."""
+    def reset_scene_for_shot_regeneration(self, scene_idx: int):
+        """Deletes a scene's assets and state, preparing it for shot regeneration."""
         if not self.state: return
         
         scene_to_reset = self.get_scene_info(scene_idx)
@@ -345,15 +346,15 @@ class ProjectManager:
             logger.warning(f"No scene found at index {scene_idx} to reset.")
             return
 
-        logger.info(f"Resetting Scene {scene_idx} for chunk regeneration.")
-        # Delete physical assets associated with the scene's chunks
-        for chunk in scene_to_reset.chunks:
-            if chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path):
-                try: os.remove(chunk.keyframe_image_path)
-                except OSError as e: logger.error(f"Error removing keyframe image {chunk.keyframe_image_path}: {e}")
-            if chunk.video_path and os.path.exists(chunk.video_path):
-                try: os.remove(chunk.video_path)
-                except OSError as e: logger.error(f"Error removing chunk video {chunk.video_path}: {e}")
+        logger.info(f"Resetting Scene {scene_idx} for shot regeneration.")
+        # Delete physical assets associated with the scene's shots
+        for shot in scene_to_reset.shots:
+            if shot.keyframe_image_path and os.path.exists(shot.keyframe_image_path):
+                try: os.remove(shot.keyframe_image_path)
+                except OSError as e: logger.error(f"Error removing keyframe image {shot.keyframe_image_path}: {e}")
+            if shot.video_path and os.path.exists(shot.video_path):
+                try: os.remove(shot.video_path)
+                except OSError as e: logger.error(f"Error removing shot video {shot.video_path}: {e}")
         
         # Delete the assembled scene video if it exists
         if scene_to_reset.assembled_video_path and os.path.exists(scene_to_reset.assembled_video_path):
@@ -382,11 +383,11 @@ class ProjectManager:
             if os.path.exists(audio_path): os.remove(audio_path)
             assembled_path = os.path.join(base_dir, f"scene_{scene_idx}_assembled_video.mp4")
             if os.path.exists(assembled_path): os.remove(assembled_path)
-            for chunk in scene_to_remove.chunks:
-                if chunk.keyframe_image_path and os.path.exists(chunk.keyframe_image_path):
-                    os.remove(chunk.keyframe_image_path)
-                if chunk.video_path and os.path.exists(chunk.video_path):
-                    os.remove(chunk.video_path)
+            for shot in scene_to_remove.shots:
+                if shot.keyframe_image_path and os.path.exists(shot.keyframe_image_path):
+                    os.remove(shot.keyframe_image_path)
+                if shot.video_path and os.path.exists(shot.video_path):
+                    os.remove(shot.video_path)
             
             self.state.scenes = [s for s in self.state.scenes if s.scene_idx != scene_idx]
 

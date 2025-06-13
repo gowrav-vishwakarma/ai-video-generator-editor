@@ -44,7 +44,7 @@ class ZeroscopeT2V(BaseT2V):
         base_resolution = (576, 320)
         return {
             "resolutions": {"Portrait": base_resolution, "Landscape": base_resolution},
-            "max_chunk_duration": 2.0 
+            "max_shot_duration": 2.0 
         }
 
     def _load_pipeline(self):
@@ -106,5 +106,5 @@ class ZeroscopeT2V(BaseT2V):
 
         export_to_video(upscaled_video_frames, output_video_path, fps=fps)
         
-        print(f"High-quality T2V video chunk saved to {output_video_path}")
+        print(f"High-quality T2V video shot saved to {output_video_path}")
         return output_video_path

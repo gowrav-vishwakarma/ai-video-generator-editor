@@ -57,8 +57,8 @@ class BaseLLM(ABC):
         pass
 
     @abstractmethod
-    def generate_chunk_visual_prompts(self, scene_narration: str, original_scene_prompt: str, num_chunks: int, content_config: ContentConfig, main_subject: str, setting: str) -> List[Tuple[str, str]]:
-        """Generates visual and motion prompts for each chunk within a scene."""
+    def generate_shot_visual_prompts(self, scene_narration: str, original_scene_prompt: str, num_shots: int, content_config: ContentConfig, main_subject: str, setting: str) -> List[Tuple[str, str]]:
+        """Generates visual and motion prompts for each shot within a scene."""
         pass
 
     @abstractmethod

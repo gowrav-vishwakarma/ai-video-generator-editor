@@ -29,7 +29,7 @@ class ContentConfig(BaseModel):
     font_for_subtitles: str = "Arial"
 
     # --- DYNAMIC settings, to be populated by the TaskExecutor ---
-    model_max_video_chunk_duration: float = 2.0 # A safe default
+    model_max_video_shot_duration: float = 2.0 # A safe default
     generation_resolution: Tuple[int, int] = (1024, 1024) # A safe default
 
     @property

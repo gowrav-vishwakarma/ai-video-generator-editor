@@ -37,9 +37,16 @@ def list_projects():
                     with open(project_file, 'r') as f: 
                         data = json.load(f)
                     
-                    config = data.get('project_info', {}).get('config', {})
+                    project_info = data.get('project_info', {})
+                    # --- START OF MODIFICATION ---
+                    # Use title, but fall back to topic for old projects, then to dir name.
+                    title = project_info.get('title', project_info.get('topic', project_dir))
+                    topic = project_info.get('topic', 'N/A') # Keep topic for potential detailed views
+                    # --- END OF MODIFICATION ---
+
+                    config = project_info.get('config', {})
                     final_video_info = data.get('final_video', {})
-                    status = data.get('project_info', {}).get('status', 'unknown')
+                    status = project_info.get('status', 'unknown')
 
                     flow = "Image-to-Video" if config.get('use_svd_flow', True) else "Text-to-Video"
                     
@@ -56,20 +63,21 @@ def list_projects():
                                 print(f"Could not read video duration for {final_video_path}: {e}")
                                 duration = 0.0
                     
-                    # --- NEW: Extract module selections ---
                     modules = config.get('module_selections', {})
-                    # --- END OF NEW ---
-
+                    
+                    # --- START OF MODIFICATION ---
                     projects.append({
                         'name': project_dir, 
-                        'topic': data['project_info']['topic'], 
-                        'created_at': datetime.datetime.fromtimestamp(data['project_info']['created_at']), 
+                        'title': title, # Use the new title field
+                        'topic': topic, # Keep topic field for completeness
+                        'created_at': datetime.datetime.fromtimestamp(project_info.get('created_at', 0)), 
                         'status': status,
                         'flow': flow,
                         'final_video_path': final_video_path,
                         'duration': duration,
-                        'modules': modules, # Add modules to the returned dictionary
+                        'modules': modules,
                     })
+                    # --- END OF MODIFICATION ---
                 except Exception as e:
                     print(f"Error loading project {project_dir}: {e}") 
     return sorted(projects, key=lambda p: p['created_at'], reverse=True)

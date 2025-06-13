@@ -11,7 +11,7 @@ from config_manager import ContentConfig, DEVICE, clear_vram_globally
 class ZephyrLLMConfig(BaseModuleConfig):
     model_id: str = "HuggingFaceH4/zephyr-7b-beta"
     max_new_tokens_script: int = 2048 # Increased for new fields
-    max_new_tokens_chunk_prompt: int = 256
+    max_new_tokens_shot_prompt: int = 256
     temperature: float = 0.7
     top_k: int = 50
     top_p: float = 0.95
@@ -147,25 +147,25 @@ class ZephyrLLM(BaseLLM):
             "visuals": [f"Cinematic overview of {topic}."], "hashtags": [f"#{topic.replace(' ', '')}"]
         }
 
-    def generate_chunk_visual_prompts(self, scene_narration: str, original_scene_prompt: str, num_chunks: int, content_config: ContentConfig, main_subject: str, setting: str) -> List[Tuple[str, str]]:
+    def generate_shot_visual_prompts(self, scene_narration: str, original_scene_prompt: str, num_shots: int, content_config: ContentConfig, main_subject: str, setting: str) -> List[Tuple[str, str]]:
         self._load_model_and_tokenizer()
-        chunk_prompts = []
+        shot_prompts = []
         
-        # Define the prompts, which are the same for each chunk generation call
+        # Define the prompts, which are the same for each shot generation call
         system_prompt = (
             "You are an Movie director. Your task is to generate a 'visual_prompt' and a 'motion_prompt' for a short video shot "
             "The prompts MUST incorporate the provided main subject and setting. Do NOT change the subject. "
             "Respond in this exact JSON format: {\"visual_prompt\": \"...\", \"motion_prompt\": \"...\"}"
         )
 
-        for chunk_idx in range(num_chunks):
-            print(f"--- Generating prompts for Chunk {chunk_idx + 1}/{num_chunks} ---")
+        for shot_idx in range(num_shots):
+            print(f"--- Generating prompts for Shot {shot_idx + 1}/{num_shots} ---")
             
             # --- NEW: Defensive check to prevent intermittent crashes ---
             # This handles rare cases where the model/tokenizer might be cleared from memory
             # between calls within the same task execution.
             if self.model is None or self.tokenizer is None:
-                print("WARNING: LLM was unloaded unexpectedly. Forcing a reload before generating chunk prompt.")
+                print("WARNING: LLM was unloaded unexpectedly. Forcing a reload before generating shot prompt.")
                 self._load_model_and_tokenizer()
 
             user_prompt = f"""
@@ -174,9 +174,9 @@ class ZephyrLLM(BaseLLM):
             
             ---
             **Original Scene Goal:** "{original_scene_prompt}"
-            **This Chunk's Narration:** "{scene_narration}"
+            **This Shot's Narration:** "{scene_narration}"
             
-            Based on ALL the information above, create a visual and motion prompt for chunk {chunk_idx + 1}/{num_chunks}.
+            Based on ALL the information above, create a visual and motion prompt for shot {shot_idx + 1}/{num_shots}.
             The visual prompt should be a specific, detailed moment consistent with the subject and setting.
             try to describe the visual prompt in minimum words but in very specific details what a director would want  the image to look like.
             Descrive character, subject and envrionment in words, only chose important words no need to make complete sentances.
@@ -189,17 +189,17 @@ class ZephyrLLM(BaseLLM):
             
             visual_prompt, motion_prompt = None, None
 
-            # --- MODIFICATION START: Add retry loop for each chunk ---
+            # --- MODIFICATION START: Add retry loop for each shot ---
             for attempt in range(3):
-                print(f"Attempt {attempt + 1} of 3 to generate valid prompt JSON for chunk {chunk_idx + 1}...")
+                print(f"Attempt {attempt + 1} of 3 to generate valid prompt JSON for shot {shot_idx + 1}...")
                 
                 tokenized_chat = self.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(self.model.device)
                 outputs = self.model.generate(
-                    input_ids=tokenized_chat, max_new_tokens=self.config.max_new_tokens_chunk_prompt, 
+                    input_ids=tokenized_chat, max_new_tokens=self.config.max_new_tokens_shot_prompt, 
                     do_sample=True, temperature=self.config.temperature, pad_token_id=self.tokenizer.eos_token_id
                 )
                 decoded_output = self.tokenizer.decode(outputs[0][tokenized_chat.shape[-1]:], skip_special_tokens=True)
-                response_data = self._parse_llm_json_response(decoded_output, f"chunk {chunk_idx+1} prompt")
+                response_data = self._parse_llm_json_response(decoded_output, f"shot {shot_idx+1} prompt")
 
                 # Check for a dictionary with both required string keys
                 if (isinstance(response_data, dict) and 
@@ -208,20 +208,20 @@ class ZephyrLLM(BaseLLM):
                     
                     visual_prompt = response_data["visual_prompt"]
                     motion_prompt = response_data["motion_prompt"]
-                    print(f"Successfully generated and parsed prompts for chunk {chunk_idx + 1}.")
+                    print(f"Successfully generated and parsed prompts for shot {shot_idx + 1}.")
                     break  # Exit the retry loop on success
                 else:
-                    print(f"Attempt {attempt + 1} failed for chunk {chunk_idx + 1}. Invalid JSON or missing keys.")
+                    print(f"Attempt {attempt + 1} failed for shot {shot_idx + 1}. Invalid JSON or missing keys.")
             # --- MODIFICATION END ---
 
             # If after 3 attempts, we still don't have prompts, use the fallback
             if not visual_prompt or not motion_prompt:
-                print(f"All attempts failed for chunk {chunk_idx + 1}. Using fallback prompts.")
+                print(f"All attempts failed for shot {shot_idx + 1}. Using fallback prompts.")
                 visual_prompt = f"{main_subject} in {setting}, {original_scene_prompt}"
                 motion_prompt = "gentle camera movement"
 
-            chunk_prompts.append((visual_prompt, motion_prompt))
-            print(f"  > Chunk {chunk_idx+1} Visual: \"{visual_prompt[:80]}...\"")
-            print(f"  > Chunk {chunk_idx+1} Motion: \"{motion_prompt[:80]}...\"")
+            shot_prompts.append((visual_prompt, motion_prompt))
+            print(f"  > Shot {shot_idx+1} Visual: \"{visual_prompt[:80]}...\"")
+            print(f"  > Shot {shot_idx+1} Motion: \"{motion_prompt[:80]}...\"")
         
-        return chunk_prompts
+        return shot_prompts

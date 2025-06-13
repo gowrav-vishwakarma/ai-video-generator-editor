@@ -38,7 +38,7 @@ class SlideshowI2V(BaseI2V):
         return {
             # It can handle any resolution, as it just wraps the image.
             "resolutions": {"Portrait": (1080, 1920), "Landscape": (1920, 1080)},
-            "max_chunk_duration": 60.0 # Can be very long
+            "max_shot_duration": 60.0 # Can be very long
         }
 
     def _load_pipeline(self):
@@ -71,13 +71,13 @@ class SlideshowI2V(BaseI2V):
                 output_video_path, 
                 fps=content_config.fps,
                 codec="libx264", 
-                audio=False, # This is a visual-only chunk
+                audio=False, # This is a visual-only shot
                 threads=4, 
                 preset="medium",
                 logger=None # Suppress verbose moviepy logs
             )
             
-            print(f"Slideshow video chunk saved to {output_video_path}")
+            print(f"Slideshow video shot saved to {output_video_path}")
             return output_video_path
 
         except Exception as e:

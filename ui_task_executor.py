@@ -15,11 +15,6 @@ def _import_class(module_path_str: str):
     except Exception as e:
         print(f"Warning: Could not import module: {module_path_str}. Error: {e}"); return None
 
-def _reload_project_state(pm: ProjectManager):
-    output_dir = pm.output_dir; new_pm = ProjectManager(output_dir); new_pm.load_project()
-    st.session_state.current_project_manager = new_pm; st.session_state.ui_executor = UITaskExecutor(new_pm)
-    return new_pm
-
 class UITaskExecutor:
     def __init__(self, project_manager: ProjectManager):
         self.pm = project_manager; self._task_executor = None
@@ -28,60 +23,28 @@ class UITaskExecutor:
         if self._task_executor is None: self._task_executor = TaskExecutor(self.pm)
         return self._task_executor
     
-    # --- START: DEFINITIVE get_shot_duration FIX ---
     def get_shot_duration(self, shot: Shot) -> float:
-        """
-        Calculates a shot's actual contribution to the timeline.
-        It's the LESSER of its allocated time slot and the selected module's max generation time.
-        """
-        # 1. Find the shot's parent scene to get context.
         scene = next((s for s in self.pm.state.scenes if shot in s.shots), None)
-        if not scene or not scene.narration.duration > 0 or not scene.shots:
-            return 0.0
-
-        # 2. Calculate the "time slot" allocated to this shot.
-        target_shot_duration = scene.narration.duration / len(scene.shots)
-
-        # 3. Determine the maximum time the selected video module can generate.
-        flow = shot.generation_flow
+        if not scene or not scene.narration.duration > 0 or not scene.shots: return 0.0
+        target_shot_duration = scene.narration.duration / len(scene.shots); flow = shot.generation_flow
         if flow in ("T2I_I2V", "Upload_I2V"): module_path = shot.module_selections.get('i2v')
         elif flow == "T2V": module_path = shot.module_selections.get('t2v')
-        else:
-            return 0.0
-
-        if not module_path:
-            return 0.0 # No module selected yet, so it contributes 0 duration.
-
+        else: return 0.0
+        if not module_path: return 0.0
         ModuleClass = _import_class(module_path)
-        if not ModuleClass:
-            return 0.0
-        
+        if not ModuleClass: return 0.0
         try:
-            model_caps = ModuleClass.get_model_capabilities()
-            module_max_duration = model_caps.get("max_shot_duration", 0.0)
-        except Exception as e:
-            print(f"Warning: Could not get capabilities for {module_path}. {e}")
-            module_max_duration = 0.0
-        
-        # 4. The actual contribution is the smaller of the two values.
+            model_caps = ModuleClass.get_model_capabilities(); module_max_duration = model_caps.get("max_shot_duration", 0.0)
+        except Exception: module_max_duration = 0.0
         return min(target_shot_duration, module_max_duration)
-    # --- END: DEFINITIVE FIX ---
 
     def add_scene(self):
-        from system import select_item; self.pm.add_scene()
-        new_pm = _reload_project_state(self.pm)
-        if new_pm.state.scenes:
-            new_scene = new_pm.state.scenes[-1]; select_item('scene', new_scene.uuid)
-        st.toast("New scene added.", icon="🎬"); st.rerun()
-
-    # def update_shot_flow(self, scene_uuid: UUID, shot_uuid: UUID):
-    #     flow_key = f"flow_select_{shot_uuid}"; selected_flow_title = st.session_state.get(flow_key)
-    #     flow_options = {"T2I ➡️ I2V": "T2I_I2V", "T2V": "T2V", "Upload ➡️ I2V": "Upload_I2V"}
-    #     new_flow_value = flow_options.get(selected_flow_title)
-    #     if new_flow_value:
-    #         shot = self.pm.get_shot(scene_uuid, shot_uuid)
-    #         if shot and shot.generation_flow != new_flow_value:
-    #             self.pm.update_shot(scene_uuid, shot_uuid, {"generation_flow": new_flow_value})
+        from system import select_item
+        if not self.pm or not self.pm.state: return
+        self.pm.add_scene()
+        # The new scene is the last one in the list
+        new_scene = self.pm.state.scenes[-1]
+        select_item('scene', new_scene.uuid, rerun=True) # Rerun is now handled by select_item
 
     def update_scene_title(self, scene_uuid: UUID):
         key = f"title_{scene_uuid}"; new_title = st.session_state.get(key)
@@ -102,36 +65,42 @@ class UITaskExecutor:
     
     def _execute_and_reload(self, task, data, success_msg, error_msg):
         with st.spinner(f"{error_msg.replace('failed', 'in progress')}..."): success = self.task_executor.execute_task(task, data)
-        _reload_project_state(self.pm)
-        if success: st.toast(success_msg, icon="✨"); st.rerun()
+        if success: st.toast(success_msg, icon="✨")
         else: st.error(error_msg)
-    
+        st.rerun()
+        
     def create_character(self, name: str, image_file):
         char_dir = os.path.join(self.pm.output_dir, "characters", name.replace(" ", "_")); os.makedirs(char_dir, exist_ok=True)
         img_path = os.path.join(char_dir, "base_reference.png"); corrected_image = load_and_correct_image_orientation(image_file)
-        if corrected_image: corrected_image.save(img_path, "PNG"); self.pm.add_character(name, img_path); st.toast(f"Character '{name}' created!", icon="👤"); _reload_project_state(self.pm)
+        if corrected_image: corrected_image.save(img_path, "PNG"); self.pm.add_character(name, img_path); st.toast(f"Character '{name}' created!", icon="👤"); st.rerun()
         else: st.error("Could not process image.")
+        
     def create_voice(self, name: str, module_path: str, wav_file):
         voice_dir = os.path.join(self.pm.output_dir, "voices", name.replace(" ", "_")); os.makedirs(voice_dir, exist_ok=True)
         wav_path = os.path.join(voice_dir, "reference.wav");
         with open(wav_path, "wb") as f: f.write(wav_file.getbuffer())
-        self.pm.add_voice(name, module_path, wav_path); st.toast(f"Voice '{name}' created!", icon="🗣️"); _reload_project_state(self.pm)
+        self.pm.add_voice(name, module_path, wav_path); st.toast(f"Voice '{name}' created!", icon="🗣️"); st.rerun()
+    
     def delete_scene(self, scene_uuid: UUID):
-        self.pm.delete_scene(scene_uuid); st.toast("Scene deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('project', self.pm.state.uuid); st.rerun()
+        self.pm.delete_scene(scene_uuid); st.toast("Scene deleted.", icon="🗑️"); from system import select_item; select_item('project', self.pm.state.uuid, rerun=True)
+    
     def add_shot_to_scene(self, scene_uuid: UUID):
-        self.pm.add_shot_to_scene(scene_uuid); st.toast("New shot added.", icon="🎞️"); _reload_project_state(self.pm); st.rerun()
+        self.pm.add_shot_to_scene(scene_uuid); st.toast("New shot added.", icon="🎞️"); st.rerun()
+    
     def delete_shot(self, scene_uuid: UUID, shot_uuid: UUID):
-        self.pm.delete_shot(scene_uuid, shot_uuid); st.toast("Shot deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('scene', scene_uuid); st.rerun()
+        self.pm.delete_shot(scene_uuid, shot_uuid); st.toast("Shot deleted.", icon="🗑️"); from system import select_item; select_item('scene', scene_uuid, rerun=True)
+    
     def handle_shot_image_upload(self, scene_uuid: UUID, shot_uuid: UUID, image_file):
         shot_dir = os.path.join(self.pm.output_dir, "shots", str(shot_uuid)); os.makedirs(shot_dir, exist_ok=True)
         img_path = os.path.join(shot_dir, "uploaded_reference.png"); corrected_image = load_and_correct_image_orientation(image_file)
         if corrected_image:
-            corrected_image.save(img_path, "PNG"); self.pm.update_shot(scene_uuid, shot_uuid, {"uploaded_image_path": img_path, "status": "upload_complete"}); st.toast("Uploaded image saved.", icon="🖼️"); _reload_project_state(self.pm)
+            corrected_image.save(img_path, "PNG"); self.pm.update_shot(scene_uuid, shot_uuid, {"uploaded_image_path": img_path, "status": "upload_complete"}); st.toast("Uploaded image saved.", icon="🖼️"); st.rerun()
         else: st.error("Could not process uploaded image.")
+        
     def generate_shot_image(self, scene_uuid: UUID, shot_uuid: UUID): self._execute_and_reload("generate_shot_image", {"scene_uuid": scene_uuid, "shot_uuid": shot_uuid}, "Image generated!", "Image generation failed.")
     def generate_shot_video(self, scene_uuid: UUID, shot_uuid: UUID): self._execute_and_reload("generate_shot_video", {"scene_uuid": scene_uuid, "shot_uuid": shot_uuid}, "Video generated!", "Video generation failed.")
     def generate_shot_t2v(self, scene_uuid: UUID, shot_uuid: UUID): self._execute_and_reload("generate_shot_t2v", {"scene_uuid": scene_uuid, "shot_uuid": shot_uuid}, "T2V Video generated!", "T2V generation failed.")
     def generate_scene_audio(self, scene_uuid: UUID): self._execute_and_reload("generate_audio", {"scene_uuid": scene_uuid}, "Audio generated!", "Audio generation failed.")
     def assemble_final_video(self): self._execute_and_reload("assemble_final_video", {}, "Final video assembled!", "Final assembly failed.")
-    def delete_character(self, uuid: UUID): self.pm.delete_character(uuid); st.toast("Character deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('project', self.pm.state.uuid); st.rerun()
-    def delete_voice(self, uuid: UUID): self.pm.delete_voice(uuid); st.toast("Voice deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('project', self.pm.state.uuid); st.rerun()
+    def delete_character(self, uuid: UUID): self.pm.delete_character(uuid); st.toast("Character deleted.", icon="🗑️"); from system import select_item; select_item('project', self.pm.state.uuid, rerun=True)
+    def delete_voice(self, uuid: UUID): self.pm.delete_voice(uuid); st.toast("Voice deleted.", icon="🗑️"); from system import select_item; select_item('project', self.pm.state.uuid, rerun=True)

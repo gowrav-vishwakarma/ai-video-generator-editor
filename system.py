@@ -14,21 +14,23 @@ def go_to_step(step_name: str):
     st.session_state.current_step = step_name
     st.rerun()
 
+# --- START: DEFINITIVE FIX for select_item ---
 def select_item(item_type: str, item_uuid):
-    """Sets the currently selected item and forces a UI refresh."""
+    """
+    Sets the currently selected item in the inspector.
+    It does NOT rerun the app. The caller is responsible for the rerun.
+    """
     st.session_state.selected_item_type = item_type
     st.session_state.selected_item_uuid = item_uuid
-    st.rerun()
+# --- END: DEFINITIVE FIX ---
 
 @st.cache_resource
 def get_discovered_modules():
-    """Caches the discovered modules for the session."""
     print("--- Discovering all available modules... ---")
     return discover_modules()
 
 @st.cache_resource
 def get_system_config() -> SystemConfig:
-    """Detects and caches system specs."""
     print("--- Detecting system specifications... ---")
     try:
         gpus = GPUtil.getGPUs()
@@ -39,7 +41,6 @@ def get_system_config() -> SystemConfig:
     return SystemConfig(vram_gb=round(vram, 1), ram_gb=round(ram, 1))
 
 def initialize_system():
-    """Ensure all system-level resources are loaded."""
     if 'system_config' not in st.session_state:
         st.session_state.system_config = get_system_config()
     if 'discovered_modules' not in st.session_state:

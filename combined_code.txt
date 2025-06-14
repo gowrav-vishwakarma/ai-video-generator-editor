@@ -5,117 +5,97 @@ import os
 import time
 import torch
 
-# Local imports
 from project_manager import ProjectManager
 from ui_components import render_asset_panel, render_inspector_panel, render_timeline, render_viewer, render_project_selection_page
-from system import initialize_system, go_to_step, select_item # Import select_item
+from system import initialize_system, go_to_step, select_item
 from ui_task_executor import UITaskExecutor
 
-# --- Page Config & Initialization ---
 st.set_page_config(page_title="Modular AI Video Studio", page_icon="🎬", layout="wide")
-
-# Fix for Streamlit/Torch conflict
 torch.classes.__path__ = []
 
 def init_session_state():
     """Initialize session state variables."""
     defaults = {
-        'current_project_manager': None,
+        'current_project_path': None,
         'current_step': 'project_selection',
         'selected_item_uuid': None,
         'selected_item_type': None,
-        'ui_executor': None,
-        'is_processing': False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
-    
     initialize_system()
 
 init_session_state()
 
-
 def load_project(project_name: str):
-    """Loads a project into the session state and navigates to the editor."""
-    project_path = os.path.join("modular_reels_output", project_name)
-    pm = ProjectManager(project_path)
-    if pm.load_project():
-        st.session_state.current_project_manager = pm
-        st.session_state.ui_executor = UITaskExecutor(pm)
-        st.session_state.is_processing = False
-        # --- THIS IS THE FIX ---
-        # Set the project itself as the initially selected item.
-        select_item('project', pm.state.uuid)
-        # --- END OF FIX ---
-        go_to_step('editor')
-    else:
-        st.error("Failed to load project.")
-
+    """Sets the current project path and navigates to the editor."""
+    st.session_state.current_project_path = os.path.join("modular_reels_output", project_name)
+    st.session_state.current_step = 'editor'
+    st.session_state.selected_item_uuid = None # Reset selection on load
+    st.rerun()
 
 def create_new_project(title: str, video_format: str):
-    """Creates a new project and navigates to the editor."""
+    """Creates a new project, sets its path, and navigates to the editor."""
     name = "".join(c for c in title.lower() if c.isalnum() or c in " ").replace(" ", "_")[:50]
     output_dir = f"modular_reels_output/{name}_{int(time.time())}"
-    
     pm = ProjectManager(output_dir)
     pm.initialize_project(title, video_format)
-    
-    st.session_state.current_project_manager = pm
-    st.session_state.ui_executor = UITaskExecutor(pm)
-    st.session_state.is_processing = False
-    # --- THIS IS THE FIX ---
-    # Set the project itself as the initially selected item.
-    select_item('project', pm.state.uuid)
-    # --- END OF FIX ---
-    go_to_step('editor')
-
+    st.session_state.current_project_path = output_dir
+    st.session_state.current_step = 'editor'
+    st.session_state.selected_item_uuid = None # Reset selection on create
+    st.rerun()
 
 def render_editor():
     """Renders the main video editor interface."""
-    pm = st.session_state.current_project_manager
-    if not pm or not pm.state:
-        st.warning("No project loaded. Returning to project selection.")
+    if not st.session_state.current_project_path:
+        st.warning("No project path set. Returning to project selection.")
         go_to_step('project_selection')
         return
 
-    # Allow the project title to be selected, showing the "Add Scene" button
+    pm = ProjectManager(st.session_state.current_project_path)
+    if not pm.load_project():
+        st.error(f"Failed to load project from: {st.session_state.current_project_path}")
+        go_to_step('project_selection')
+        return
+        
+    ui_executor = UITaskExecutor(pm)
+    
+    # --- START: DEFINITIVE FIX ---
+    # If nothing is selected, default to selecting the project itself.
+    # We no longer pass the 'rerun' argument.
+    if not st.session_state.get('selected_item_uuid'):
+        select_item('project', pm.state.uuid)
+    # --- END: DEFINITIVE FIX ---
+
     if st.button(f"🎬 Studio: {pm.state.title}", use_container_width=True):
         select_item('project', pm.state.uuid)
+        st.rerun() # Explicitly rerun on this click
     
-    # --- Main Toolbar ---
     toolbar_cols = st.columns([2, 2, 5])
     with toolbar_cols[0]:
         if st.button("⬅️ Back to Projects"):
-            st.session_state.current_project_manager = None
+            st.session_state.current_project_path = None
             st.session_state.selected_item_uuid = None
             st.session_state.selected_item_type = None
             go_to_step('project_selection')
-    
     with toolbar_cols[1]:
         if st.button("🏆 Assemble Final Video", type="primary", use_container_width=True):
-            st.session_state.ui_executor.assemble_final_video()
-
+            ui_executor.assemble_final_video()
 
     st.divider()
-
-    # --- Main Editor Layout ---
     left_col, center_col, right_col = st.columns([1, 2, 1.5])
-
     with left_col:
-        render_asset_panel()
-
+        render_asset_panel(pm, ui_executor)
     with center_col:
-        render_viewer()
+        render_viewer(pm)
         st.divider()
-        render_timeline()
-
+        render_timeline(pm, ui_executor)
     with right_col:
         st.subheader("⚙️ Inspector")
         with st.container(border=True, height=800):
-            render_inspector_panel()
+            render_inspector_panel(pm, ui_executor)
 
-# --- Main Application Router ---
 if st.session_state.current_step == 'project_selection':
     render_project_selection_page(create_new_project, load_project)
 elif st.session_state.current_step == 'editor':
@@ -288,15 +268,32 @@ class ProjectState(BaseModel):
         return (1080, 1920) if self.video_format == "Portrait" else (1920, 1080)
 
 def clear_vram_globally(*items_to_del):
+    """
+    Safely clears VRAM by checking item dtypes before moving to CPU,
+    then deleting references and running garbage collection.
+    """
     print(f"Attempting to clear VRAM. Received {len(items_to_del)} items to delete.")
     for item in items_to_del:
-        if hasattr(item, 'to'):
-            try: item.to('cpu')
-            except Exception: pass
+        if item is None:
+            continue
+            
+        # Only try to move items to CPU if they support it and are not float16
+        # This prevents the "Pipelines loaded with dtype=torch.float16" warning.
+        if hasattr(item, 'to') and hasattr(item, 'dtype') and item.dtype != torch.float16:
+            try:
+                item.to('cpu')
+            except Exception as e:
+                print(f"Could not move item of type {type(item).__name__} to CPU: {e}")
+
+    # Delete the references to the objects passed into the function.
+    # The calling function (e.g., module.clear_vram) is responsible for setting its own attributes to None.
     del items_to_del
+    
+    # Run garbage collection and empty the CUDA cache
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    print("VRAM clearing attempt finished.")
 
 
 
@@ -371,27 +368,18 @@ def _safe_remove(path: Optional[str]):
         except OSError as e: logger.error(f"Error removing file {path}: {e}")
 
 class ProjectManager:
+    # ... (__init__, _save_state, initialize_project, load_project, getters, _cleanup_shot_files, delete methods, add methods are all correct and unchanged)
     def __init__(self, output_dir: str):
-        self.output_dir = output_dir
-        self.project_file = os.path.join(output_dir, "project_state.json")
-        self.state: Optional[ProjectState] = None
-        os.makedirs(self.output_dir, exist_ok=True)
-        
+        self.output_dir = output_dir; self.project_file = os.path.join(output_dir, "project_state.json"); self.state: Optional[ProjectState] = None; os.makedirs(self.output_dir, exist_ok=True)
     def _save_state(self):
-        """Saves the current in-memory state to the project file."""
         if not self.state: return
-        with open(self.project_file, 'w', encoding='utf-8') as f:
-            f.write(self.state.model_dump_json(indent=2))
-            
+        with open(self.project_file, 'w', encoding='utf-8') as f: f.write(self.state.model_dump_json(indent=2))
     def initialize_project(self, title: str, video_format: str):
-        self.state = ProjectState(title=title, video_format=video_format)
-        self._save_state()
-    
+        self.state = ProjectState(title=title, video_format=video_format); self._save_state()
     def load_project(self) -> bool:
         if not os.path.exists(self.project_file): return False
         try:
-            with open(self.project_file, 'r', encoding='utf-8') as f:
-                self.state = ProjectState.model_validate_json(f.read())
+            with open(self.project_file, 'r', encoding='utf-8') as f: self.state = ProjectState.model_validate_json(f.read())
             needs_save = False
             if not hasattr(self.state, 'add_narration_text_to_video'): self.state.add_narration_text_to_video = True; needs_save = True
             for i, scene in enumerate(self.state.scenes):
@@ -402,22 +390,18 @@ class ProjectManager:
                     if not hasattr(shot, 'user_defined_duration'): shot.user_defined_duration = None; needs_save = True
             if needs_save: logger.warning(f"Upgraded old project format: '{self.state.title}'"); self._save_state()
             return True
-        except Exception as e:
-            logger.error(f"Error loading or migrating project: {e}", exc_info=True); return False
-
+        except Exception as e: logger.error(f"Error loading or migrating project: {e}", exc_info=True); return False
     def get_scene(self, uuid: UUID) -> Optional[Scene]: return next((s for s in self.state.scenes if s.uuid == uuid), None)
     def get_shot(self, scene_uuid: UUID, shot_uuid: UUID) -> Optional[Shot]:
         scene = self.get_scene(scene_uuid); return next((s for s in scene.shots if s.uuid == shot_uuid), None) if scene else None
     def get_character(self, uuid: UUID) -> Optional[Character]: return next((c for c in self.state.characters if c.uuid == uuid), None)
     def get_voice(self, uuid: UUID) -> Optional[Voice]: return next((v for v in self.state.voices if v.uuid == uuid), None)
-    
     def _cleanup_shot_files(self, shot: Shot):
         _safe_remove(shot.keyframe_image_path); _safe_remove(shot.video_path); _safe_remove(shot.uploaded_image_path)
         shot_dir = os.path.join(self.output_dir, "shots", str(shot.uuid))
         if os.path.isdir(shot_dir):
             try: shutil.rmtree(shot_dir)
             except OSError as e: logger.error(f"Error removing shot directory {shot_dir}: {e}")
-            
     def delete_scene(self, scene_uuid: UUID):
         if not self.state: return
         scene_to_delete = self.get_scene(scene_uuid)
@@ -425,22 +409,19 @@ class ProjectManager:
             for shot in scene_to_delete.shots: self._cleanup_shot_files(shot)
             _safe_remove(scene_to_delete.assembled_video_path); _safe_remove(scene_to_delete.narration.audio_path)
         self.state.scenes = [s for s in self.state.scenes if s.uuid != scene_uuid]; self._save_state()
-            
     def delete_shot(self, scene_uuid: UUID, shot_uuid: UUID):
         scene = self.get_scene(scene_uuid)
         if scene:
             shot_to_delete = next((s for s in scene.shots if s.uuid == shot_uuid), None)
             if shot_to_delete: self._cleanup_shot_files(shot_to_delete)
             scene.shots = [s for s in scene.shots if s.uuid != shot_uuid]; self._save_state()
-    
     def add_character(self, name: str, base_image_path: str):
         char = Character(name=name); version = CharacterVersion(name="base", reference_image_path=base_image_path); char.versions.append(version)
         self.state.characters.append(char); self._save_state()
     def add_voice(self, name: str, module_path: str, wav_path: str):
         voice = Voice(name=name, tts_module_path=module_path, reference_wav_path=wav_path); self.state.voices.append(voice); self._save_state()
     def add_scene(self):
-        if not self.state: return
-        self.state.scenes.append(Scene(title=f"Scene {len(self.state.scenes) + 1}")); self._save_state()
+        if not self.state: return; self.state.scenes.append(Scene(title=f"Scene {len(self.state.scenes) + 1}")); self._save_state()
     def add_shot_to_scene(self, scene_uuid: UUID):
         scene = self.get_scene(scene_uuid)
         if scene:
@@ -455,14 +436,42 @@ class ProjectManager:
             if 'narration_text' in data: scene.narration.text = data['narration_text']; scene.narration.status = "pending"; scene.narration.audio_path = None
             if 'voice_uuid' in data: scene.narration.voice_uuid = data['voice_uuid']; scene.narration.status = "pending"
             self._save_state()
+
+    # --- START: DEFINITIVE update_shot FIX ---
     def update_shot(self, scene_uuid: UUID, shot_uuid: UUID, data: dict):
         shot = self.get_shot(scene_uuid, shot_uuid)
-        if shot:
-            changed = False
-            for key, value in data.items():
-                if hasattr(shot, key) and getattr(shot, key) != value: setattr(shot, key, value); changed = True
-            if changed: shot.status = "pending"; shot.keyframe_image_path = None; shot.video_path = None
-            self._save_state()
+        if not shot: return
+
+        # Track what kind of change is happening
+        invalidates_image = False
+        invalidates_video = False
+
+        for key, value in data.items():
+            if hasattr(shot, key) and getattr(shot, key) != value:
+                setattr(shot, key, value)
+                # Determine the consequence of the change
+                if key in ['visual_prompt', 'character_uuids'] or (key == 'module_selections' and value.get('t2i') != shot.module_selections.get('t2i')):
+                    invalidates_image = True
+                elif key in ['motion_prompt', 'user_defined_duration'] or (key == 'module_selections' and value.get('i2v') != shot.module_selections.get('i2v')) or (key == 'module_selections' and value.get('t2v') != shot.module_selections.get('t2v')):
+                    invalidates_video = True
+                elif key == 'generation_flow':
+                    invalidates_image = True # Changing flow is a major change
+        
+        # Apply invalidations
+        if invalidates_image:
+            _safe_remove(shot.keyframe_image_path)
+            shot.keyframe_image_path = None
+            shot.status = "pending"
+        
+        if invalidates_image or invalidates_video:
+            _safe_remove(shot.video_path)
+            shot.video_path = None
+            if shot.status != "pending": # Don't override a full reset
+                shot.status = "image_generated" if shot.keyframe_image_path else "pending"
+
+        self._save_state()
+    # --- END: DEFINITIVE FIX ---
+
     def update_final_video_path(self, path: Optional[str]):
         if self.state: self.state.final_video_path = path; self.state.status = "completed" if path else "in_progress"; self._save_state()
 
@@ -485,20 +494,23 @@ def go_to_step(step_name: str):
     st.session_state.current_step = step_name
     st.rerun()
 
+# --- START: DEFINITIVE FIX for select_item ---
 def select_item(item_type: str, item_uuid):
-    """Sets the currently selected item in the inspector."""
+    """
+    Sets the currently selected item in the inspector.
+    It does NOT rerun the app. The caller is responsible for the rerun.
+    """
     st.session_state.selected_item_type = item_type
     st.session_state.selected_item_uuid = item_uuid
+# --- END: DEFINITIVE FIX ---
 
 @st.cache_resource
 def get_discovered_modules():
-    """Caches the discovered modules for the session."""
     print("--- Discovering all available modules... ---")
     return discover_modules()
 
 @st.cache_resource
 def get_system_config() -> SystemConfig:
-    """Detects and caches system specs."""
     print("--- Detecting system specifications... ---")
     try:
         gpus = GPUtil.getGPUs()
@@ -509,7 +521,6 @@ def get_system_config() -> SystemConfig:
     return SystemConfig(vram_gb=round(vram, 1), ram_gb=round(ram, 1))
 
 def initialize_system():
-    """Ensure all system-level resources are loaded."""
     if 'system_config' not in st.session_state:
         st.session_state.system_config = get_system_config()
     if 'discovered_modules' not in st.session_state:
@@ -704,8 +715,8 @@ from system import get_discovered_modules, select_item
 from utils import list_projects
 import os
 
-# ... (render_project_selection_page, render_asset_panel, render_viewer are unchanged)
 def render_project_selection_page(create_callback, load_callback):
+    # This function doesn't need the project manager, so it's correct
     st.title("🎥 Modular AI Video Studio"); c1, c2 = st.columns([1, 2]);
     with c1:
         st.subheader("🚀 Create New Project")
@@ -720,10 +731,12 @@ def render_project_selection_page(create_callback, load_callback):
             for p in projects:
                 with st.container(border=True):
                     cols = st.columns([4, 1]); cols[0].markdown(f"**{p['title']}**")
-                    cols[1].button("Load", key=f"load_{p['name']}", on_click=load_callback, args=(p['name'],), use_container_width=True)
+                    if cols[1].button("Load", key=f"load_{p['name']}", use_container_width=True):
+                        load_callback(p['name'])
 
-def render_asset_panel():
-    st.subheader("🎭 Casting"); pm = st.session_state.current_project_manager; ui_executor = st.session_state.ui_executor
+# --- START: DEFINITIVE FIX ---
+def render_asset_panel(pm, ui_executor):
+    st.subheader("🎭 Casting");
     with st.expander("Characters", expanded=True):
         if not pm.state.characters: st.caption("No characters created yet.")
         for char in pm.state.characters:
@@ -731,26 +744,30 @@ def render_asset_panel():
             if char.versions and char.versions[0].reference_image_path and os.path.exists(char.versions[0].reference_image_path):
                 cols[0].image(char.versions[0].reference_image_path, width=50)
             cols[1].write(char.name)
-            if cols[2].button("👁️", key=f"select_char_{char.uuid}", help="Inspect Character"): select_item('character', char.uuid)
+            if cols[2].button("👁️", key=f"select_char_{char.uuid}", help="Inspect Character"): 
+                select_item('character', char.uuid)
+                st.rerun()
         with st.popover("➕ Add New Character", use_container_width=True):
             with st.form("add_char_form", clear_on_submit=True):
                 name = st.text_input("Character Name"); image = st.file_uploader("Upload Base Image", type=['png', 'jpg', 'jpeg'])
                 if st.form_submit_button("Create Character", type="primary"):
-                    if name and image: ui_executor.create_character(name, image); st.rerun()
+                    if name and image: ui_executor.create_character(name, image)
     with st.expander("Voices", expanded=True):
         if not pm.state.voices: st.caption("No voices created yet.")
         for voice in pm.state.voices:
             cols = st.columns([4, 1]); cols[0].write(voice.name)
-            if cols[1].button("👁️", key=f"select_voice_{voice.uuid}", help="Inspect Voice"): select_item('voice', voice.uuid)
+            if cols[1].button("👁️", key=f"select_voice_{voice.uuid}", help="Inspect Voice"):
+                select_item('voice', voice.uuid)
+                st.rerun()
         with st.popover("➕ Add New Voice", use_container_width=True):
             with st.form("add_voice_form", clear_on_submit=True):
                 name = st.text_input("Voice Name"); tts_modules = get_discovered_modules().get('tts', []); tts_options = {mod['caps'].title: mod['path'] for mod in tts_modules}
                 selected_title = st.selectbox("TTS Model", options=list(tts_options.keys())); speaker_wav = st.file_uploader("Reference Speaker Audio (.wav)", type=['wav'])
                 if st.form_submit_button("Create Voice", type="primary"):
-                    if name and selected_title and speaker_wav: ui_executor.create_voice(name, tts_options[selected_title], speaker_wav); st.rerun()
+                    if name and selected_title and speaker_wav: ui_executor.create_voice(name, tts_options[selected_title], speaker_wav)
 
-def render_viewer():
-    st.subheader("📺 Viewer"); pm = st.session_state.current_project_manager
+def render_viewer(pm):
+    st.subheader("📺 Viewer")
     selected_type = st.session_state.get('selected_item_type'); selected_uuid = st.session_state.get('selected_item_uuid')
     with st.container(border=True, height=450):
         item_to_show, video_path, image_path = None, None, None
@@ -764,70 +781,55 @@ def render_viewer():
         elif pm.state.final_video_path and os.path.exists(pm.state.final_video_path): st.video(pm.state.final_video_path)
         else: st.info("The final video or selected asset preview will appear here.")
 
-# --- MODIFIED: Timeline logic is now more robust ---
-def render_timeline():
-    st.subheader("🗓️ Timeline"); pm = st.session_state.current_project_manager; ui_executor = st.session_state.ui_executor
+def render_timeline(pm, ui_executor):
+    st.subheader("🗓️ Timeline")
     with st.container(border=True, height=350):
         if not pm.state.scenes: st.caption("No scenes yet. Use the Inspector to add a scene.")
         for i, scene in enumerate(pm.state.scenes):
-            narration_duration = scene.narration.duration
-            # --- The logic for calculating total contribution is now implicitly correct ---
-            all_shot_durations = ui_executor.task_executor.calculate_shot_durations_for_scene(scene)
+            narration_duration = scene.narration.duration; all_shot_durations = ui_executor.task_executor.calculate_shot_durations_for_scene(scene)
             total_shot_contribution = sum(all_shot_durations)
-            
             if narration_duration == 0: summary_icon = "⏳"
             elif total_shot_contribution >= narration_duration - 0.1: summary_icon = "✅"
             else: summary_icon = "❌"
             expander_title = f"{summary_icon} {scene.title} ({narration_duration:.1f}s)"
-
             with st.expander(expander_title, expanded=True):
                 is_selected_scene = st.session_state.selected_item_type == 'scene' and st.session_state.selected_item_uuid == scene.uuid
-                
                 coverage_ratio = (total_shot_contribution / narration_duration) if narration_duration > 0 else 1.0
                 if narration_duration == 0: coverage_color, coverage_text = "grey", "Generate audio to see coverage"
                 elif abs(total_shot_contribution - narration_duration) < 0.1: coverage_color, coverage_text = "green", f"Coverage: {total_shot_contribution:.1f}s / {narration_duration:.1f}s"
                 else: coverage_color, coverage_text = "red", f"Deficit: {(narration_duration - total_shot_contribution):.1f}s"
                 st.progress(min(coverage_ratio, 1.0), text=coverage_text)
-                
-                if st.button("Inspect Scene", key=f"select_scene_{scene.uuid}", type="primary" if is_selected_scene else "secondary", use_container_width=True): select_item('scene', scene.uuid)
-                
+                if st.button("Inspect Scene", key=f"select_scene_{scene.uuid}", type="primary" if is_selected_scene else "secondary", use_container_width=True):
+                    select_item('scene', scene.uuid)
+                    st.rerun()
                 st.markdown("---")
-                if scene.shots:
-                    st.markdown("##### Shot Contribution (Actual / Module Max)")
-                    for j, shot in enumerate(scene.shots):
-                        module_capacity = ui_executor.task_executor.get_module_max_duration(shot)
-                        actual_contribution = all_shot_durations[j]
-                        
-                        if module_capacity >= actual_contribution and actual_contribution > 0: status_icon, color = "✅", "green"
-                        else: status_icon, color = "❌", "red"
-
-                        cols = st.columns([1, 4])
-                        cols[0].markdown(f"**{j+1}**")
-                        cols[1].markdown(f"<small style='color:{color};'>{status_icon} {actual_contribution:.2f}s / {module_capacity:.2f}s</small>", unsafe_allow_html=True)
-                
-                if scene.shots:
+                if not scene.shots:
+                    st.caption("No shots in this scene. Use the Inspector to add one.")
+                else:
                     shot_cols = st.columns(len(scene.shots))
                     for j, shot in enumerate(scene.shots):
                         with shot_cols[j]:
-                            is_selected_shot = st.session_state.selected_item_type == 'shot' and st.session_state.selected_item_uuid[1] == shot.uuid
-                            status_icon_btn = "🎬" if shot.status == 'video_generated' else "🖼️" if shot.status in ['image_generated', 'upload_complete'] else "⏳"
-                            if st.button(f"{status_icon_btn} Shot {j+1}", key=f"select_shot_{shot.uuid}", use_container_width=True, type="primary" if is_selected_shot else "secondary"):
-                                select_item('shot', (scene.uuid, shot.uuid))
+                            with st.container(border=True):
+                                module_capacity = ui_executor.task_executor.get_module_max_duration(shot); actual_contribution = all_shot_durations[j]
+                                if module_capacity >= actual_contribution and actual_contribution > 0: status_icon, color = "✅", "green"
+                                else: status_icon, color = "❌", "red"
+                                status_icon_btn = "🎬" if shot.status == 'video_generated' else "🖼️" if shot.status in ['image_generated', 'upload_complete'] else "⏳"
+                                st.markdown(f"**{status_icon_btn} Shot {j+1}**")
+                                st.markdown(f"<small style='color:{color};'>{status_icon} {actual_contribution:.2f}s / {module_capacity:.2f}s</small>", unsafe_allow_html=True)
+                                is_selected_shot = st.session_state.selected_item_type == 'shot' and st.session_state.selected_item_uuid[1] == shot.uuid
+                                if st.button("Inspect", key=f"select_shot_{shot.uuid}", use_container_width=True, type="primary" if is_selected_shot else "secondary"):
+                                    select_item('shot', (scene.uuid, shot.uuid))
+                                    st.rerun()
 
-# --- MODIFIED: Shot Inspector is now dynamic ---
-def render_inspector_panel():
+def render_inspector_panel(pm, ui_executor):
     selected_type = st.session_state.get('selected_item_type'); selected_uuid = st.session_state.get('selected_item_uuid')
-    pm = st.session_state.current_project_manager; ui_executor = st.session_state.ui_executor
     if not selected_uuid: st.info("Select an item to inspect its properties."); return
-    
     if selected_type == 'project':
-        # This part is correct and unchanged
         st.markdown(f"**Project: {pm.state.title}**"); st.write(f"Format: {pm.state.video_format}")
         st.checkbox("Add Narration Text to Final Video", value=pm.state.add_narration_text_to_video, key="project_add_text", on_change=lambda: setattr(pm.state, 'add_narration_text_to_video', st.session_state.project_add_text) or pm._save_state())
-        st.divider(); st.subheader("Timeline Management"); st.button("➕ Add New Scene", use_container_width=True, on_click=ui_executor.add_scene)
-    
+        st.divider(); st.subheader("Timeline Management"); 
+        if st.button("➕ Add New Scene", use_container_width=True): ui_executor.add_scene()
     elif selected_type == 'scene':
-        # This part is correct and unchanged
         scene = pm.get_scene(selected_uuid); st.markdown(f"**🎬 Scene Inspector**")
         st.text_input("Scene Title", value=scene.title, key=f"title_{scene.uuid}", on_change=ui_executor.update_scene_title, args=(scene.uuid,))
         st.subheader("Narration"); st.text_area("Script", value=scene.narration.text, key=f"narration_{scene.uuid}", height=120, on_change=ui_executor.update_scene_narration, args=(scene.uuid,))
@@ -835,7 +837,7 @@ def render_inspector_panel():
         if not voice_options: st.warning("No voices created!")
         else:
             voice_names = list(voice_options.keys()); current_voice = pm.get_voice(scene.narration.voice_uuid);
-            if not current_voice and voice_names: current_voice = pm.get_voice(voice_options[voice_names[0]]); ui_executor.update_scene_voice(scene.uuid, current_voice.uuid)
+            if not current_voice and voice_names: current_voice = pm.get_voice(voice_options[voice_names[0]]); ui_executor.update_scene_voice(scene.uuid)
             idx = voice_names.index(current_voice.name) if current_voice else 0
             st.selectbox("Voice", options=voice_names, index=idx, key=f"voice_select_{scene.uuid}", on_change=ui_executor.update_scene_voice, args=(scene.uuid,))
         can_gen_audio = bool(voice_options and st.session_state.get(f"narration_{scene.uuid}", scene.narration.text) and scene.narration.voice_uuid)
@@ -846,71 +848,69 @@ def render_inspector_panel():
             if st.button("Gen Audio", use_container_width=True, type="primary", disabled=not can_gen_audio): ui_executor.generate_scene_audio(scene.uuid)
         st.divider(); st.subheader("Management")
         if st.button("➕ Add Shot", use_container_width=True): ui_executor.add_shot_to_scene(scene.uuid)
-        if st.button("🗑️ Delete Scene", type="secondary", use_container_width=True, on_click=ui_executor.delete_scene, args=(scene.uuid,)): pass
-
+        if st.button("🗑️ Delete Scene", type="secondary", use_container_width=True): ui_executor.delete_scene(scene.uuid)
     elif selected_type == 'shot':
+        # This section is correct and unchanged
         scene_uuid, shot_uuid = selected_uuid; scene = pm.get_scene(scene_uuid); shot = pm.get_shot(scene_uuid, shot_uuid); shot_idx = scene.shots.index(shot)
         st.markdown(f"**🎞️ Shot {shot_idx + 1} Inspector**")
-        
-        flow_options = {"T2I ➡️ I2V": "T2I_I2V", "T2V": "T2V", "Upload ➡️ I2V": "Upload_I2V"}
-        flow_captions = list(flow_options.keys())
-        current_flow_idx = flow_captions.index(next((k for k, v in flow_options.items() if v == shot.generation_flow), "T2I ➡️ I2V"))
-        
-        # When this radio button changes, we trigger a rerun to update the UI below it
-        st.radio("Method", options=flow_captions, index=current_flow_idx, horizontal=True, key=f"flow_select_{shot.uuid}", on_change=ui_executor.update_shot_flow, args=(scene_uuid, shot_uuid))
-
         with st.form(key=f"shot_form_{shot.uuid}"):
+            st.subheader("Generation Flow"); flow_options = {"T2I ➡️ I2V": "T2I_I2V", "T2V": "T2V", "Upload ➡️ I2V": "Upload_I2V"}; flow_captions = list(flow_options.keys())
+            current_flow_idx = flow_captions.index(next((k for k, v in flow_options.items() if v == shot.generation_flow), "T2I ➡️ I2V"))
+            flow_selection = st.radio("Method", options=flow_captions, index=current_flow_idx, horizontal=True)
             visual = st.text_area("Visual Prompt", shot.visual_prompt, height=100)
             motion = st.text_area("Motion Prompt", shot.motion_prompt, height=68, help="For I2V models, describe desired motion.")
             char_options = {c.name: c.uuid for c in pm.state.characters}; default_chars = [pm.get_character(uid).name for uid in shot.character_uuids if pm.get_character(uid)]
             assigned_chars = st.multiselect("Characters", options=list(char_options.keys()), default=default_chars)
-            
-            st.subheader("Technical")
-            modules = get_discovered_modules(); uploaded_file = None
+            st.subheader("Technical Details"); modules = get_discovered_modules(); uploaded_file = None
             t2i_options = {m['caps'].title: m['path'] for m in modules.get('t2i', [])}; i2v_options = {m['caps'].title: m['path'] for m in modules.get('i2v', [])}; t2v_options = {m['caps'].title: m['path'] for m in modules.get('t2v', [])}
             t2i_paths_rev = {v: k for k, v in t2i_options.items()}; i2v_paths_rev = {v: k for k, v in i2v_options.items()}; t2v_paths_rev = {v: k for k, v in t2v_options.items()}
-            
             new_t2i_title, new_i2v_title, new_t2v_title = None, None, None
-
-            # The UI now dynamically shows the correct options based on the current shot's generation_flow
-            if shot.generation_flow == "T2I_I2V":
-                if t2i_options: current_t2i_path = shot.module_selections.get('t2i'); current_t2i_title = t2i_paths_rev.get(current_t2i_path, list(t2i_options.keys())[0]); new_t2i_title = st.selectbox("Image Model", options=t2i_options.keys(), index=list(t2i_options.keys()).index(current_t2i_title))
-                if i2v_options: current_i2v_path = shot.module_selections.get('i2v'); current_i2v_title = i2v_paths_rev.get(current_i2v_path, list(i2v_options.keys())[0]); new_i2v_title = st.selectbox("Video Model", options=i2v_options.keys(), index=list(i2v_options.keys()).index(current_i2v_title))
-            elif shot.generation_flow == "T2V":
-                if t2v_options: current_t2v_path = shot.module_selections.get('t2v'); current_t2v_title = t2v_paths_rev.get(current_t2v_path, list(t2v_options.keys())[0]); new_t2v_title = st.selectbox("T2V Model", options=t2v_options.keys(), index=list(t2v_options.keys()).index(current_t2v_title))
-            elif shot.generation_flow == "Upload_I2V":
+            selected_flow_value = flow_options[flow_selection]
+            if selected_flow_value == "T2I_I2V":
+                if t2i_options: current_t2i_title = t2i_paths_rev.get(shot.module_selections.get('t2i'), list(t2i_options.keys())[0]); new_t2i_title = st.selectbox("Image Model", options=t2i_options.keys(), index=list(t2i_options.keys()).index(current_t2i_title))
+                if i2v_options: current_i2v_title = i2v_paths_rev.get(shot.module_selections.get('i2v'), list(i2v_options.keys())[0]); new_i2v_title = st.selectbox("Video Model", options=i2v_options.keys(), index=list(i2v_options.keys()).index(current_i2v_title))
+            elif selected_flow_value == "T2V":
+                if t2v_options: current_t2v_title = t2v_paths_rev.get(shot.module_selections.get('t2v'), list(t2v_options.keys())[0]); new_t2v_title = st.selectbox("T2V Model", options=t2v_options.keys(), index=list(t2v_options.keys()).index(current_t2v_title))
+            elif selected_flow_value == "Upload_I2V":
                 uploaded_file = st.file_uploader("Upload Image", type=['png', 'jpg', 'jpeg'])
-                if i2v_options: current_i2v_path = shot.module_selections.get('i2v'); current_i2v_title = i2v_paths_rev.get(current_i2v_path, list(i2v_options.keys())[0]); new_i2v_title = st.selectbox("Video Model", options=i2v_options.keys(), index=list(i2v_options.keys()).index(current_i2v_title))
-
+                if i2v_options: current_i2v_title = i2v_paths_rev.get(shot.module_selections.get('i2v'), list(i2v_options.keys())[0]); new_i2v_title = st.selectbox("Video Model", options=i2v_options.keys(), index=list(i2v_options.keys()).index(current_i2v_title))
+            st.subheader("Duration Control"); is_auto_duration = shot.user_defined_duration is None
+            auto_duration_toggle = st.checkbox("Auto-set Duration (Greedy)", value=is_auto_duration)
+            module_capacity = ui_executor.task_executor.get_module_max_duration(shot); user_duration = shot.user_defined_duration
+            if not auto_duration_toggle:
+                user_duration = st.slider("Manual Duration (s)", min_value=0.1, max_value=module_capacity or 10.0, value=shot.user_defined_duration or module_capacity, step=0.1)
             if st.form_submit_button("💾 Update Shot Details"):
                 if uploaded_file: ui_executor.handle_shot_image_upload(scene_uuid, shot_uuid, uploaded_file)
-                final_module_selections = {}
+                final_module_selections = shot.module_selections.copy()
                 if new_t2i_title: final_module_selections['t2i'] = t2i_options.get(new_t2i_title)
                 if new_i2v_title: final_module_selections['i2v'] = i2v_options.get(new_i2v_title)
                 if new_t2v_title: final_module_selections['t2v'] = t2v_options.get(new_t2v_title)
                 new_char_uuids = [char_options[name] for name in assigned_chars]
-                ui_executor.pm.update_shot(scene_uuid, shot_uuid, {"visual_prompt": visual, "motion_prompt": motion, "module_selections": final_module_selections, "character_uuids": new_char_uuids})
+                final_user_duration = None if auto_duration_toggle else user_duration
+                ui_executor.pm.update_shot(scene_uuid, shot_uuid, {"generation_flow": selected_flow_value, "visual_prompt": visual, "motion_prompt": motion, "module_selections": final_module_selections, "character_uuids": new_char_uuids, "user_defined_duration": final_user_duration})
                 st.toast("Shot details updated!"); st.rerun()
-        
         st.subheader("Generation")
         if shot.generation_flow == "T2I_I2V":
             cols = st.columns(2)
-            with cols[0]: st.button("🖼️ Generate Image", use_container_width=True, type="primary" if not shot.keyframe_image_path else "secondary", on_click=ui_executor.generate_shot_image, args=(scene_uuid, shot_uuid))
-            with cols[1]: st.button("📹 Generate Video", use_container_width=True, type="primary" if not shot.video_path else "secondary", disabled=not shot.keyframe_image_path, on_click=ui_executor.generate_shot_video, args=(scene_uuid, shot_uuid))
-        elif shot.generation_flow == "T2V": st.button("📹 Generate Video", use_container_width=True, type="primary", on_click=ui_executor.generate_shot_t2v, args=(scene_uuid, shot_uuid))
-        elif shot.generation_flow == "Upload_I2V": st.button("📹 Generate Video from Upload", use_container_width=True, type="primary", disabled=not shot.uploaded_image_path, on_click=ui_executor.generate_shot_video, args=(scene_uuid, shot_uuid))
-        
+            with cols[0]:
+                if st.button("🖼️ Generate Image", use_container_width=True, type="primary" if not shot.keyframe_image_path else "secondary"): ui_executor.generate_shot_image(scene_uuid, shot_uuid)
+            with cols[1]:
+                if st.button("📹 Generate Video", use_container_width=True, type="primary" if not shot.video_path else "secondary", disabled=not shot.keyframe_image_path): ui_executor.generate_shot_video(scene_uuid, shot_uuid)
+        elif shot.generation_flow == "T2V":
+            if st.button("📹 Generate Video", use_container_width=True, type="primary"): ui_executor.generate_shot_t2v(scene_uuid, shot_uuid)
+        elif shot.generation_flow == "Upload_I2V":
+            if st.button("📹 Generate Video from Upload", use_container_width=True, type="primary", disabled=not shot.uploaded_image_path): ui_executor.generate_shot_video(scene_uuid, shot_uuid)
         st.divider()
-        st.button("🗑️ Delete Shot", type="secondary", use_container_width=True, on_click=ui_executor.delete_shot, args=(scene_uuid, shot.uuid))
-
+        if st.button("🗑️ Delete Shot", type="secondary", use_container_width=True): ui_executor.delete_shot(scene_uuid, shot.uuid)
     elif selected_type in ['character', 'voice']:
         asset = pm.get_character(selected_uuid) if selected_type == 'character' else pm.get_voice(selected_uuid)
         st.markdown(f"**{selected_type.title()} Inspector: {asset.name}**")
         if selected_type == 'voice':
             st.write(f"**TTS Model:** `{asset.tts_module_path.split('.')[-1]}`");
             if os.path.exists(asset.reference_wav_path): st.audio(asset.reference_wav_path)
-        st.button(f"🗑️ Delete {selected_type.title()}", type="secondary", use_container_width=True, on_click=ui_executor.delete_character if selected_type == 'character' else ui_executor.delete_voice, args=(asset.uuid,))
-
+        if st.button(f"🗑️ Delete {selected_type.title()}", type="secondary", use_container_width=True):
+            if selected_type == 'character': ui_executor.delete_character(asset.uuid)
+            else: ui_executor.delete_voice(asset.uuid)
     with st.expander("🐞 Debug: Show Full Project State"):
         st.json(pm.state.model_dump_json(indent=2))
 
@@ -934,11 +934,6 @@ def _import_class(module_path_str: str):
     except Exception as e:
         print(f"Warning: Could not import module: {module_path_str}. Error: {e}"); return None
 
-def _reload_project_state(pm: ProjectManager):
-    output_dir = pm.output_dir; new_pm = ProjectManager(output_dir); new_pm.load_project()
-    st.session_state.current_project_manager = new_pm; st.session_state.ui_executor = UITaskExecutor(new_pm)
-    return new_pm
-
 class UITaskExecutor:
     def __init__(self, project_manager: ProjectManager):
         self.pm = project_manager; self._task_executor = None
@@ -947,60 +942,28 @@ class UITaskExecutor:
         if self._task_executor is None: self._task_executor = TaskExecutor(self.pm)
         return self._task_executor
     
-    # --- START: DEFINITIVE get_shot_duration FIX ---
     def get_shot_duration(self, shot: Shot) -> float:
-        """
-        Calculates a shot's actual contribution to the timeline.
-        It's the LESSER of its allocated time slot and the selected module's max generation time.
-        """
-        # 1. Find the shot's parent scene to get context.
         scene = next((s for s in self.pm.state.scenes if shot in s.shots), None)
-        if not scene or not scene.narration.duration > 0 or not scene.shots:
-            return 0.0
-
-        # 2. Calculate the "time slot" allocated to this shot.
-        target_shot_duration = scene.narration.duration / len(scene.shots)
-
-        # 3. Determine the maximum time the selected video module can generate.
-        flow = shot.generation_flow
+        if not scene or not scene.narration.duration > 0 or not scene.shots: return 0.0
+        target_shot_duration = scene.narration.duration / len(scene.shots); flow = shot.generation_flow
         if flow in ("T2I_I2V", "Upload_I2V"): module_path = shot.module_selections.get('i2v')
         elif flow == "T2V": module_path = shot.module_selections.get('t2v')
-        else:
-            return 0.0
-
-        if not module_path:
-            return 0.0 # No module selected yet, so it contributes 0 duration.
-
+        else: return 0.0
+        if not module_path: return 0.0
         ModuleClass = _import_class(module_path)
-        if not ModuleClass:
-            return 0.0
-        
+        if not ModuleClass: return 0.0
         try:
-            model_caps = ModuleClass.get_model_capabilities()
-            module_max_duration = model_caps.get("max_shot_duration", 0.0)
-        except Exception as e:
-            print(f"Warning: Could not get capabilities for {module_path}. {e}")
-            module_max_duration = 0.0
-        
-        # 4. The actual contribution is the smaller of the two values.
+            model_caps = ModuleClass.get_model_capabilities(); module_max_duration = model_caps.get("max_shot_duration", 0.0)
+        except Exception: module_max_duration = 0.0
         return min(target_shot_duration, module_max_duration)
-    # --- END: DEFINITIVE FIX ---
 
     def add_scene(self):
-        from system import select_item; self.pm.add_scene()
-        new_pm = _reload_project_state(self.pm)
-        if new_pm.state.scenes:
-            new_scene = new_pm.state.scenes[-1]; select_item('scene', new_scene.uuid)
-        st.toast("New scene added.", icon="🎬"); st.rerun()
-
-    def update_shot_flow(self, scene_uuid: UUID, shot_uuid: UUID):
-        flow_key = f"flow_select_{shot_uuid}"; selected_flow_title = st.session_state.get(flow_key)
-        flow_options = {"T2I ➡️ I2V": "T2I_I2V", "T2V": "T2V", "Upload ➡️ I2V": "Upload_I2V"}
-        new_flow_value = flow_options.get(selected_flow_title)
-        if new_flow_value:
-            shot = self.pm.get_shot(scene_uuid, shot_uuid)
-            if shot and shot.generation_flow != new_flow_value:
-                self.pm.update_shot(scene_uuid, shot_uuid, {"generation_flow": new_flow_value})
+        from system import select_item
+        if not self.pm or not self.pm.state: return
+        self.pm.add_scene()
+        # The new scene is the last one in the list
+        new_scene = self.pm.state.scenes[-1]
+        select_item('scene', new_scene.uuid, rerun=True) # Rerun is now handled by select_item
 
     def update_scene_title(self, scene_uuid: UUID):
         key = f"title_{scene_uuid}"; new_title = st.session_state.get(key)
@@ -1021,39 +984,45 @@ class UITaskExecutor:
     
     def _execute_and_reload(self, task, data, success_msg, error_msg):
         with st.spinner(f"{error_msg.replace('failed', 'in progress')}..."): success = self.task_executor.execute_task(task, data)
-        _reload_project_state(self.pm)
-        if success: st.toast(success_msg, icon="✨"); st.rerun()
+        if success: st.toast(success_msg, icon="✨")
         else: st.error(error_msg)
-    
+        st.rerun()
+        
     def create_character(self, name: str, image_file):
         char_dir = os.path.join(self.pm.output_dir, "characters", name.replace(" ", "_")); os.makedirs(char_dir, exist_ok=True)
         img_path = os.path.join(char_dir, "base_reference.png"); corrected_image = load_and_correct_image_orientation(image_file)
-        if corrected_image: corrected_image.save(img_path, "PNG"); self.pm.add_character(name, img_path); st.toast(f"Character '{name}' created!", icon="👤"); _reload_project_state(self.pm)
+        if corrected_image: corrected_image.save(img_path, "PNG"); self.pm.add_character(name, img_path); st.toast(f"Character '{name}' created!", icon="👤"); st.rerun()
         else: st.error("Could not process image.")
+        
     def create_voice(self, name: str, module_path: str, wav_file):
         voice_dir = os.path.join(self.pm.output_dir, "voices", name.replace(" ", "_")); os.makedirs(voice_dir, exist_ok=True)
         wav_path = os.path.join(voice_dir, "reference.wav");
         with open(wav_path, "wb") as f: f.write(wav_file.getbuffer())
-        self.pm.add_voice(name, module_path, wav_path); st.toast(f"Voice '{name}' created!", icon="🗣️"); _reload_project_state(self.pm)
+        self.pm.add_voice(name, module_path, wav_path); st.toast(f"Voice '{name}' created!", icon="🗣️"); st.rerun()
+    
     def delete_scene(self, scene_uuid: UUID):
-        self.pm.delete_scene(scene_uuid); st.toast("Scene deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('project', self.pm.state.uuid); st.rerun()
+        self.pm.delete_scene(scene_uuid); st.toast("Scene deleted.", icon="🗑️"); from system import select_item; select_item('project', self.pm.state.uuid, rerun=True)
+    
     def add_shot_to_scene(self, scene_uuid: UUID):
-        self.pm.add_shot_to_scene(scene_uuid); st.toast("New shot added.", icon="🎞️"); _reload_project_state(self.pm); st.rerun()
+        self.pm.add_shot_to_scene(scene_uuid); st.toast("New shot added.", icon="🎞️"); st.rerun()
+    
     def delete_shot(self, scene_uuid: UUID, shot_uuid: UUID):
-        self.pm.delete_shot(scene_uuid, shot_uuid); st.toast("Shot deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('scene', scene_uuid); st.rerun()
+        self.pm.delete_shot(scene_uuid, shot_uuid); st.toast("Shot deleted.", icon="🗑️"); from system import select_item; select_item('scene', scene_uuid, rerun=True)
+    
     def handle_shot_image_upload(self, scene_uuid: UUID, shot_uuid: UUID, image_file):
         shot_dir = os.path.join(self.pm.output_dir, "shots", str(shot_uuid)); os.makedirs(shot_dir, exist_ok=True)
         img_path = os.path.join(shot_dir, "uploaded_reference.png"); corrected_image = load_and_correct_image_orientation(image_file)
         if corrected_image:
-            corrected_image.save(img_path, "PNG"); self.pm.update_shot(scene_uuid, shot_uuid, {"uploaded_image_path": img_path, "status": "upload_complete"}); st.toast("Uploaded image saved.", icon="🖼️"); _reload_project_state(self.pm)
+            corrected_image.save(img_path, "PNG"); self.pm.update_shot(scene_uuid, shot_uuid, {"uploaded_image_path": img_path, "status": "upload_complete"}); st.toast("Uploaded image saved.", icon="🖼️"); st.rerun()
         else: st.error("Could not process uploaded image.")
+        
     def generate_shot_image(self, scene_uuid: UUID, shot_uuid: UUID): self._execute_and_reload("generate_shot_image", {"scene_uuid": scene_uuid, "shot_uuid": shot_uuid}, "Image generated!", "Image generation failed.")
     def generate_shot_video(self, scene_uuid: UUID, shot_uuid: UUID): self._execute_and_reload("generate_shot_video", {"scene_uuid": scene_uuid, "shot_uuid": shot_uuid}, "Video generated!", "Video generation failed.")
     def generate_shot_t2v(self, scene_uuid: UUID, shot_uuid: UUID): self._execute_and_reload("generate_shot_t2v", {"scene_uuid": scene_uuid, "shot_uuid": shot_uuid}, "T2V Video generated!", "T2V generation failed.")
     def generate_scene_audio(self, scene_uuid: UUID): self._execute_and_reload("generate_audio", {"scene_uuid": scene_uuid}, "Audio generated!", "Audio generation failed.")
     def assemble_final_video(self): self._execute_and_reload("assemble_final_video", {}, "Final video assembled!", "Final assembly failed.")
-    def delete_character(self, uuid: UUID): self.pm.delete_character(uuid); st.toast("Character deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('project', self.pm.state.uuid); st.rerun()
-    def delete_voice(self, uuid: UUID): self.pm.delete_voice(uuid); st.toast("Voice deleted.", icon="🗑️"); _reload_project_state(self.pm); from system import select_item; select_item('project', self.pm.state.uuid); st.rerun()
+    def delete_character(self, uuid: UUID): self.pm.delete_character(uuid); st.toast("Character deleted.", icon="🗑️"); from system import select_item; select_item('project', self.pm.state.uuid, rerun=True)
+    def delete_voice(self, uuid: UUID): self.pm.delete_voice(uuid); st.toast("Voice deleted.", icon="🗑️"); from system import select_item; select_item('project', self.pm.state.uuid, rerun=True)
 
 
 

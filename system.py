@@ -15,9 +15,10 @@ def go_to_step(step_name: str):
     st.rerun()
 
 def select_item(item_type: str, item_uuid):
-    """Sets the currently selected item in the inspector."""
+    """Sets the currently selected item and forces a UI refresh."""
     st.session_state.selected_item_type = item_type
     st.session_state.selected_item_uuid = item_uuid
+    st.rerun()
 
 @st.cache_resource
 def get_discovered_modules():

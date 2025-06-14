@@ -4,7 +4,6 @@ from system import get_discovered_modules, select_item
 from utils import list_projects
 import os
 
-# The other functions (render_project_selection_page, render_asset_panel, render_viewer, render_inspector_panel) are all correct and do not need to be changed.
 
 def render_project_selection_page(create_callback, load_callback):
     st.title("🎥 Modular AI Video Studio"); c1, c2 = st.columns([1, 2]);
@@ -78,22 +77,19 @@ def render_timeline():
             elif total_shot_contribution >= narration_duration - 0.1: summary_icon = "✅"
             else: summary_icon = "❌"
             expander_title = f"{summary_icon} {scene.title} ({narration_duration:.1f}s)"
-
             with st.expander(expander_title, expanded=True):
                 is_selected_scene = st.session_state.selected_item_type == 'scene' and st.session_state.selected_item_uuid == scene.uuid
-                
                 coverage_ratio = (total_shot_contribution / narration_duration) if narration_duration > 0 else 1.0
                 if narration_duration == 0: coverage_color, coverage_text = "grey", "Generate audio to see coverage"
                 elif abs(total_shot_contribution - narration_duration) < 0.1: coverage_color, coverage_text = "green", f"Coverage: {total_shot_contribution:.1f}s / {narration_duration:.1f}s"
                 else: coverage_color, coverage_text = "red", f"Deficit: {(narration_duration - total_shot_contribution):.1f}s"
-                
                 st.progress(min(coverage_ratio, 1.0), text=coverage_text)
                 
-                if st.button("Inspect Scene", key=f"select_scene_{scene.uuid}", type="primary" if is_selected_scene else "secondary", use_container_width=True): select_item('scene', scene.uuid)
+                # --- MODIFIED: Removed on_click, using standard `if` block ---
+                if st.button("Inspect Scene", key=f"select_scene_{scene.uuid}", type="primary" if is_selected_scene else "secondary", use_container_width=True): 
+                    select_item('scene', scene.uuid)
                 
                 st.markdown("---")
-                
-                # --- START: New "Shot Card" UI ---
                 if not scene.shots:
                     st.caption("No shots in this scene. Use the Inspector to add one.")
                 else:
@@ -101,26 +97,18 @@ def render_timeline():
                     for j, shot in enumerate(scene.shots):
                         with shot_cols[j]:
                             with st.container(border=True):
-                                # -- Shot Info --
-                                module_capacity = ui_executor.task_executor.get_module_max_duration(shot)
-                                actual_contribution = all_shot_durations[j]
-
-                                if module_capacity >= actual_contribution and actual_contribution > 0:
-                                    status_icon, color = "✅", "green"
-                                else:
-                                    status_icon, color = "❌", "red"
-
+                                module_capacity = ui_executor.task_executor.get_module_max_duration(shot); actual_contribution = all_shot_durations[j]
+                                if module_capacity >= actual_contribution and actual_contribution > 0: status_icon, color = "✅", "green"
+                                else: status_icon, color = "❌", "red"
                                 status_icon_btn = "🎬" if shot.status == 'video_generated' else "🖼️" if shot.status in ['image_generated', 'upload_complete'] else "⏳"
-                                
-                                # Use markdown for the text parts
                                 st.markdown(f"**{status_icon_btn} Shot {j+1}**")
                                 st.markdown(f"<small style='color:{color};'>{status_icon} {actual_contribution:.2f}s / {module_capacity:.2f}s</small>", unsafe_allow_html=True)
                                 
-                                # -- Shot Button --
                                 is_selected_shot = st.session_state.selected_item_type == 'shot' and st.session_state.selected_item_uuid[1] == shot.uuid
+                                # --- MODIFIED: Removed on_click, using standard `if` block ---
                                 if st.button("Inspect", key=f"select_shot_{shot.uuid}", use_container_width=True, type="primary" if is_selected_shot else "secondary"):
                                     select_item('shot', (scene.uuid, shot.uuid))
-                # --- END: New "Shot Card" UI ---
+
                                 
 def render_inspector_panel(): #...
     selected_type = st.session_state.get('selected_item_type'); selected_uuid = st.session_state.get('selected_item_uuid')
@@ -153,39 +141,59 @@ def render_inspector_panel(): #...
     elif selected_type == 'shot':
         scene_uuid, shot_uuid = selected_uuid; scene = pm.get_scene(scene_uuid); shot = pm.get_shot(scene_uuid, shot_uuid); shot_idx = scene.shots.index(shot)
         st.markdown(f"**🎞️ Shot {shot_idx + 1} Inspector**")
-        st.radio("Method", options=["T2I ➡️ I2V", "T2V", "Upload ➡️ I2V"], index=0, horizontal=True, key=f"flow_select_{shot.uuid}", on_change=ui_executor.update_shot_flow, args=(scene_uuid, shot_uuid))
+        
         with st.form(key=f"shot_form_{shot.uuid}"):
+            st.subheader("Generation Flow")
+            flow_options = {"T2I ➡️ I2V": "T2I_I2V", "T2V": "T2V", "Upload ➡️ I2V": "Upload_I2V"}
+            flow_captions = list(flow_options.keys())
+            current_flow_idx = flow_captions.index(next((k for k, v in flow_options.items() if v == shot.generation_flow), "T2I ➡️ I2V"))
+            
+            # This radio button is now just a normal input within the form.
+            flow_selection = st.radio("Method", options=flow_captions, index=current_flow_idx, horizontal=True)
+            
             visual = st.text_area("Visual Prompt", shot.visual_prompt, height=100)
             motion = st.text_area("Motion Prompt", shot.motion_prompt, height=68, help="For I2V models, describe desired motion.")
             char_options = {c.name: c.uuid for c in pm.state.characters}; default_chars = [pm.get_character(uid).name for uid in shot.character_uuids if pm.get_character(uid)]
             assigned_chars = st.multiselect("Characters", options=list(char_options.keys()), default=default_chars)
-            st.subheader("Technical Details"); modules = get_discovered_modules(); uploaded_file = None
+            
+            st.subheader("Technical Details")
+            modules = get_discovered_modules(); uploaded_file = None
             t2i_options = {m['caps'].title: m['path'] for m in modules.get('t2i', [])}; i2v_options = {m['caps'].title: m['path'] for m in modules.get('i2v', [])}; t2v_options = {m['caps'].title: m['path'] for m in modules.get('t2v', [])}
             t2i_paths_rev = {v: k for k, v in t2i_options.items()}; i2v_paths_rev = {v: k for k, v in i2v_options.items()}; t2v_paths_rev = {v: k for k, v in t2v_options.items()}
             new_t2i_title, new_i2v_title, new_t2v_title = None, None, None
-            if shot.generation_flow == "T2I_I2V":
+
+            selected_flow_value = flow_options[flow_selection]
+            if selected_flow_value == "T2I_I2V":
                 if t2i_options: current_t2i_title = t2i_paths_rev.get(shot.module_selections.get('t2i'), list(t2i_options.keys())[0]); new_t2i_title = st.selectbox("Image Model", options=t2i_options.keys(), index=list(t2i_options.keys()).index(current_t2i_title))
                 if i2v_options: current_i2v_title = i2v_paths_rev.get(shot.module_selections.get('i2v'), list(i2v_options.keys())[0]); new_i2v_title = st.selectbox("Video Model", options=i2v_options.keys(), index=list(i2v_options.keys()).index(current_i2v_title))
-            elif shot.generation_flow == "T2V":
+            elif selected_flow_value == "T2V":
                 if t2v_options: current_t2v_title = t2v_paths_rev.get(shot.module_selections.get('t2v'), list(t2v_options.keys())[0]); new_t2v_title = st.selectbox("T2V Model", options=t2v_options.keys(), index=list(t2v_options.keys()).index(current_t2v_title))
-            elif shot.generation_flow == "Upload_I2V":
+            elif selected_flow_value == "Upload_I2V":
                 uploaded_file = st.file_uploader("Upload Image", type=['png', 'jpg', 'jpeg'])
                 if i2v_options: current_i2v_title = i2v_paths_rev.get(shot.module_selections.get('i2v'), list(i2v_options.keys())[0]); new_i2v_title = st.selectbox("Video Model", options=i2v_options.keys(), index=list(i2v_options.keys()).index(current_i2v_title))
+            
             st.subheader("Duration Control"); is_auto_duration = shot.user_defined_duration is None
             auto_duration_toggle = st.checkbox("Auto-set Duration (Greedy)", value=is_auto_duration)
             module_capacity = ui_executor.task_executor.get_module_max_duration(shot); user_duration = shot.user_defined_duration
             if not auto_duration_toggle:
                 user_duration = st.slider("Manual Duration (s)", min_value=0.1, max_value=module_capacity or 10.0, value=shot.user_defined_duration or module_capacity, step=0.1)
+
             if st.form_submit_button("💾 Update Shot Details"):
                 if uploaded_file: ui_executor.handle_shot_image_upload(scene_uuid, shot_uuid, uploaded_file)
-                final_module_selections = {}
+                final_module_selections = shot.module_selections.copy() # Start with old to preserve unused ones
                 if new_t2i_title: final_module_selections['t2i'] = t2i_options.get(new_t2i_title)
                 if new_i2v_title: final_module_selections['i2v'] = i2v_options.get(new_i2v_title)
                 if new_t2v_title: final_module_selections['t2v'] = t2v_options.get(new_t2v_title)
                 new_char_uuids = [char_options[name] for name in assigned_chars]
                 final_user_duration = None if auto_duration_toggle else user_duration
-                ui_executor.pm.update_shot(scene_uuid, shot_uuid, {"visual_prompt": visual, "motion_prompt": motion, "module_selections": final_module_selections, "character_uuids": new_char_uuids, "user_defined_duration": final_user_duration})
+                
+                ui_executor.pm.update_shot(scene_uuid, shot_uuid, {
+                    "generation_flow": selected_flow_value, "visual_prompt": visual, "motion_prompt": motion,
+                    "module_selections": final_module_selections, "character_uuids": new_char_uuids,
+                    "user_defined_duration": final_user_duration
+                })
                 st.toast("Shot details updated!"); st.rerun()
+        
         st.subheader("Generation")
         if shot.generation_flow == "T2I_I2V":
             cols = st.columns(2)

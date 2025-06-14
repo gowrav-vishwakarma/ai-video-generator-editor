@@ -83,12 +83,29 @@ class ProjectState(BaseModel):
         return (1080, 1920) if self.video_format == "Portrait" else (1920, 1080)
 
 def clear_vram_globally(*items_to_del):
+    """
+    Safely clears VRAM by checking item dtypes before moving to CPU,
+    then deleting references and running garbage collection.
+    """
     print(f"Attempting to clear VRAM. Received {len(items_to_del)} items to delete.")
     for item in items_to_del:
-        if hasattr(item, 'to'):
-            try: item.to('cpu')
-            except Exception: pass
+        if item is None:
+            continue
+            
+        # Only try to move items to CPU if they support it and are not float16
+        # This prevents the "Pipelines loaded with dtype=torch.float16" warning.
+        if hasattr(item, 'to') and hasattr(item, 'dtype') and item.dtype != torch.float16:
+            try:
+                item.to('cpu')
+            except Exception as e:
+                print(f"Could not move item of type {type(item).__name__} to CPU: {e}")
+
+    # Delete the references to the objects passed into the function.
+    # The calling function (e.g., module.clear_vram) is responsible for setting its own attributes to None.
     del items_to_del
+    
+    # Run garbage collection and empty the CUDA cache
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    print("VRAM clearing attempt finished.")

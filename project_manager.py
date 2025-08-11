@@ -15,7 +15,6 @@ def _safe_remove(path: Optional[str]):
         except OSError as e: logger.error(f"Error removing file {path}: {e}")
 
 class ProjectManager:
-    # ... (__init__, _save_state, initialize_project, load_project, getters, _cleanup_shot_files, delete methods, add methods are all correct and unchanged)
     def __init__(self, output_dir: str):
         self.output_dir = output_dir; self.project_file = os.path.join(output_dir, "project_state.json"); self.state: Optional[ProjectState] = None; os.makedirs(self.output_dir, exist_ok=True)
     def _save_state(self):
@@ -67,15 +66,67 @@ class ProjectManager:
         self.state.characters.append(char); self._save_state()
     def add_voice(self, name: str, module_path: str, wav_path: str):
         voice = Voice(name=name, tts_module_path=module_path, reference_wav_path=wav_path); self.state.voices.append(voice); self._save_state()
-    def add_scene(self):
-        if not self.state: return; self.state.scenes.append(Scene(title=f"Scene {len(self.state.scenes) + 1}")); self._save_state()
-    def add_shot_to_scene(self, scene_uuid: UUID):
+
+    def add_scene(self, after_scene_uuid: Optional[UUID] = None):
+        if not self.state: return
+        new_scene = Scene(title=f"Scene {len(self.state.scenes) + 1}")
+        if after_scene_uuid:
+            try:
+                target_index = next(i for i, s in enumerate(self.state.scenes) if s.uuid == after_scene_uuid)
+                self.state.scenes.insert(target_index + 1, new_scene)
+            except StopIteration:
+                self.state.scenes.append(new_scene)
+        else:
+            self.state.scenes.append(new_scene)
+        self._save_state()
+        return new_scene.uuid
+
+    def add_shot_to_scene(self, scene_uuid: UUID, after_shot_uuid: Optional[UUID] = None):
         scene = self.get_scene(scene_uuid)
         if scene:
             new_shot = Shot()
             if scene.shots:
-                last_shot = scene.shots[-1]; new_shot.generation_flow = last_shot.generation_flow; new_shot.module_selections = last_shot.module_selections.copy()
-            scene.shots.append(new_shot); self._save_state()
+                ref_shot_index = -1
+                if after_shot_uuid:
+                    try:
+                        ref_shot_index = next(i for i, s in enumerate(scene.shots) if s.uuid == after_shot_uuid)
+                    except StopIteration: pass
+                
+                ref_shot = scene.shots[ref_shot_index]
+                new_shot.generation_flow = ref_shot.generation_flow
+                new_shot.module_selections = ref_shot.module_selections.copy()
+
+                if after_shot_uuid:
+                    scene.shots.insert(ref_shot_index + 1, new_shot)
+                else: 
+                    scene.shots.insert(0, new_shot)
+            else:
+                 scene.shots.append(new_shot)
+            self._save_state()
+            return new_shot.uuid
+
+    def reorder_scene(self, scene_uuid: UUID, direction: str):
+        try:
+            index = next(i for i, s in enumerate(self.state.scenes) if s.uuid == scene_uuid)
+        except StopIteration: return
+        if direction == 'up' and index > 0:
+            self.state.scenes.insert(index - 1, self.state.scenes.pop(index))
+        elif direction == 'down' and index < len(self.state.scenes) - 1:
+            self.state.scenes.insert(index + 1, self.state.scenes.pop(index))
+        self._save_state()
+
+    def reorder_shot(self, scene_uuid: UUID, shot_uuid: UUID, direction: str):
+        scene = self.get_scene(scene_uuid)
+        if not scene: return
+        try:
+            index = next(i for i, s in enumerate(scene.shots) if s.uuid == shot_uuid)
+        except StopIteration: return
+        if direction == 'left' and index > 0:
+            scene.shots.insert(index - 1, scene.shots.pop(index))
+        elif direction == 'right' and index < len(scene.shots) - 1:
+            scene.shots.insert(index + 1, scene.shots.pop(index))
+        self._save_state()
+
     def update_scene(self, scene_uuid: UUID, data: dict):
         scene = self.get_scene(scene_uuid)
         if scene:
@@ -83,56 +134,56 @@ class ProjectManager:
             if 'narration_text' in data: scene.narration.text = data['narration_text']; scene.narration.status = "pending"; scene.narration.audio_path = None
             if 'voice_uuid' in data: scene.narration.voice_uuid = data['voice_uuid']; scene.narration.status = "pending"
             self._save_state()
-
+            
     def update_shot(self, scene_uuid: UUID, shot_uuid: UUID, data: dict):
-        """
-        Updates a shot's properties and intelligently invalidates generated assets
-        (image, video) based on the nature of the change.
-        """
         shot = self.get_shot(scene_uuid, shot_uuid)
-        if not shot:
-            return
+        if not shot: return
 
+        # --- START: ROBUST INVALIDATION LOGIC ---
+        # 1. Store the old state before any changes are made.
+        old_state = {
+            "generation_flow": shot.generation_flow,
+            "visual_prompt": shot.visual_prompt,
+            "motion_prompt": shot.motion_prompt,
+            "module_selections": shot.module_selections.copy(),
+            "character_uuids": shot.character_uuids.copy(),
+            "user_defined_duration": shot.user_defined_duration
+        }
+
+        # 2. Apply all new data to the shot object.
+        for key, value in data.items():
+            if hasattr(shot, key):
+                setattr(shot, key, value)
+        
+        # 3. Compare the new state against the old state to determine consequences.
         invalidates_image = False
         invalidates_video = False
 
-        # Loop through all incoming data to determine consequences and apply changes
-        for key, value in data.items():
-            # Check if an actual change is occurring
-            if hasattr(shot, key) and getattr(shot, key) != value:
-                
-                # Determine the consequence of the change BEFORE applying it
-                if key in ['visual_prompt', 'character_uuids']:
-                    invalidates_image = True
-                elif key == 'generation_flow':
-                    invalidates_image = True  # Changing flow is a major change, invalidates everything
-                elif key == 'module_selections':
-                    # Compare the incoming `value` (the new dict) with the existing `shot.module_selections`
-                    if value.get('t2i') != shot.module_selections.get('t2i'):
-                        invalidates_image = True
-                    if value.get('i2v') != shot.module_selections.get('i2v') or \
-                       value.get('t2v') != shot.module_selections.get('t2v'):
-                        invalidates_video = True
-                elif key in ['motion_prompt', 'user_defined_duration']:
-                    invalidates_video = True
-                
-                # Apply the individual change to the shot object in memory
-                setattr(shot, key, value)
-        
-        # Apply asset invalidations based on the collected flags
+        if shot.generation_flow != old_state["generation_flow"] or \
+           shot.visual_prompt != old_state["visual_prompt"] or \
+           shot.character_uuids != old_state["character_uuids"] or \
+           shot.module_selections.get('t2i') != old_state["module_selections"].get('t2i'):
+            invalidates_image = True
+            
+        if shot.motion_prompt != old_state["motion_prompt"] or \
+           shot.user_defined_duration != old_state["user_defined_duration"] or \
+           shot.module_selections.get('i2v') != old_state["module_selections"].get('i2v') or \
+           shot.module_selections.get('t2v') != old_state["module_selections"].get('t2v'):
+            invalidates_video = True
+
+        # 4. Apply the invalidations.
         if invalidates_image:
             _safe_remove(shot.keyframe_image_path)
             shot.keyframe_image_path = None
             shot.status = "pending"
         
         # If image is invalidated, video MUST also be invalidated.
-        # This condition covers both cases: image invalidation or video-only invalidation.
         if invalidates_image or invalidates_video:
             _safe_remove(shot.video_path)
             shot.video_path = None
-            # Do not override a full "pending" reset. Otherwise, update status.
             if shot.status != "pending":
                 shot.status = "image_generated" if shot.keyframe_image_path and os.path.exists(shot.keyframe_image_path) else "pending"
+        # --- END: ROBUST INVALIDATION LOGIC ---
 
         self._save_state()
 

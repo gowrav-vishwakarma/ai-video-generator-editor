@@ -1,44 +1,56 @@
-Excellent! The old `README.md` provides valuable context on the project's origins and desired features. I will now merge the strengths of both versions: the feature-rich description from the old `README` and the detailed developer guide from my previous response, all updated to reflect the current Streamlit UI-based architecture.
-
-Here is the revised, comprehensive `README.md` file.
-
----
-
 # Modular AI Video Generation Pipeline
 
 [![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Framework](https://img.shields.io/badge/Framework-Streamlit-red.svg)](https://streamlit.io)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+## ⚠️ Important Notes
+
+**Video Quality Issues**: If your generated videos appear scrambled or distorted, this typically means you're not using the optimal video dimensions that the selected model was trained on. Each AI model has specific resolution requirements for best results. Check the model documentation for recommended dimensions and adjust your video settings accordingly.
+
+**Contributors Welcome!** 🚀 This project is open to contributions from the community. If you're interested in helping improve this pipeline, adding new models, or fixing bugs, please feel free to submit pull requests or open issues.
+
+**New Project Announcement**: I've started working on a completely separate and different video generation project. If you're interested in learning more or collaborating, feel free to reach out to me on [LinkedIn](https://www.linkedin.com/in/gowravvishwakarma/)!
+
+---
+
 An extensible, modular pipeline for generating short-form videos using a variety of AI models. This tool provides a powerful Streamlit-based web interface to define a video topic, select different AI models for each generation step (language, speech, image, video), and orchestrate the entire content creation process from script to final rendered video.
 
-  
-*(Add a screenshot or GIF of your application here for maximum impact!)*
+## 🎥 Demo Video
+
+<div align="center">
+  <a href="https://youtube.com/watch?v=0YBcYGmYV4c">
+    <img src="https://img.youtube.com/vi/0YBcYGmYV4c/maxresdefault.jpg" alt="Modular AI Video Generation Pipeline Demo" width="800">
+  </a>
+  <p><strong>Watch the full demo on YouTube</strong></p>
+</div>
 
 ## Core Features
 
--   **End-to-End Video Generation**: Go from a single topic idea to a fully edited video with narration, background visuals, and text overlays in one integrated workflow.
--   **Fully Modular Architecture**: Easily add, remove, or swap different AI models for each part of the pipeline. The system is designed for extension.
--   **Dynamic Model Discovery**: The application automatically discovers any new model modules you add, making them immediately available for selection in the UI.
--   **Dual Generation Workflows**:
-    -   **Image-to-Video (High Quality)**: Generates a keyframe image first, then animates it. Offers higher visual quality and control.
-    -   **Text-to-Video (Fast)**: Generates video clips directly from text prompts for a faster, more streamlined process.
--   **Character Consistency**: Utilizes IP-Adapters in supported models (like Juggernaut-XL) to maintain the appearance of a specific character or subject across different scenes.
--   **Interactive Project Dashboard**: Once a project is created, you have full control. Edit scripts, regenerate audio, modify visual prompts, and see the progress of every task in real-time.
--   **Stateful Project Management**: Stop and resume your work at any time. The entire project state is saved, allowing you to load existing projects, make changes, and continue where you left off.
--   **Multi-Language Voice Generation**: Generate narration in over 15 languages (including English, Spanish, French, German, Japanese, Hindi, and more) using advanced TTS models.
--   **Voice Cloning**: Provide a short `.wav` file of a reference voice to clone it for the video's narration, powered by Coqui XTTS.
+- **End-to-End Video Generation**: Go from a single topic idea to a fully edited video with narration, background visuals, and text overlays in one integrated workflow.
+- **Fully Modular Architecture**: Easily add, remove, or swap different AI models for each part of the pipeline. The system is designed for extension.
+- **Dynamic Model Discovery**: The application automatically discovers any new model modules you add, making them immediately available for selection in the UI.
+- **Dual Generation Workflows**:
+  - **Image-to-Video (High Quality)**: Generates a keyframe image first, then animates it. Offers higher visual quality and control.
+  - **Text-to-Video (Fast)**: Generates video clips directly from text prompts for a faster, more streamlined process.
+- **Character Consistency**: Utilizes IP-Adapters in supported models (like Juggernaut-XL) to maintain the appearance of a specific character or subject across different scenes.
+- **Interactive Project Dashboard**: Once a project is created, you have full control. Edit scripts, regenerate audio, modify visual prompts, and see the progress of every task in real-time.
+- **Stateful Project Management**: Stop and resume your work at any time. The entire project state is saved, allowing you to load existing projects, make changes, and continue where you left off.
+- **Multi-Language Voice Generation**: Generate narration in over 15 languages (including English, Spanish, French, German, Japanese, Hindi, and more) using advanced TTS models.
+- **Voice Cloning**: Provide a short `.wav` file of a reference voice to clone it for the video's narration, powered by Coqui XTTS.
 
 ## Future Development Plans
 
 ### TODO List
 
 1. **Text-to-Music (TTM) Modules**
+
    - Background music generation for videos
    - Pure music production capabilities
    - Integration with existing video pipeline
 
 2. **Additional Model Support**
+
    - FramePack and other advanced video generation models
    - Enhanced model compatibility and optimization
    - Lora (Low-Rank Adaptation) support for fine-tuning models
@@ -47,17 +59,20 @@ An extensible, modular pipeline for generating short-form videos using a variety
    - Advanced ControlNet features (canny, segmentation, etc.)
 
 3. **Character Consistency Features**
+
    - Lora-based character consistency across scenes
    - Character style preservation and transfer
    - Multi-character management system
    - Character pose and expression control
 
 4. **Advanced Editing Features**
+
    - Multilayer timeline style editor
    - Professional-grade video editing capabilities
    - Enhanced control over transitions and effects
 
 5. **UI/UX Improvements**
+
    - Migration to FastAPI backend
    - Modern frontend with React/Vue
    - Enhanced user experience and performance
@@ -109,15 +124,17 @@ graph TD
 This project uses `uv` for fast package management.
 
 **1. Prerequisites**
-*   Python 3.10 or newer.
-*   `git` for cloning the repository.
-*   **For GPU acceleration (highly recommended):** NVIDIA GPU with CUDA drivers installed.
-*   **FFmpeg**: Required by `moviepy` for video processing. Ensure it's installed and accessible in your system's PATH.
-    -   **Ubuntu**: `sudo apt update && sudo apt install ffmpeg`
-    -   **macOS (with Homebrew)**: `brew install ffmpeg`
-    -   **Windows**: Download from the [official site](https://ffmpeg.org/download.html) and add the `bin` folder to your PATH.
+
+- Python 3.10 or newer.
+- `git` for cloning the repository.
+- **For GPU acceleration (highly recommended):** NVIDIA GPU with CUDA drivers installed.
+- **FFmpeg**: Required by `moviepy` for video processing. Ensure it's installed and accessible in your system's PATH.
+  - **Ubuntu**: `sudo apt update && sudo apt install ffmpeg`
+  - **macOS (with Homebrew)**: `brew install ffmpeg`
+  - **Windows**: Download from the [official site](https://ffmpeg.org/download.html) and add the `bin` folder to your PATH.
 
 **2. Clone the Repository**
+
 ```bash
 git clone https://github.com/your-username/your-repo-name.git
 cd your-repo-name
@@ -126,6 +143,7 @@ cd your-repo-name
 **3. Set up a Virtual Environment and Install Dependencies**
 
 First, install `uv`:
+
 ```bash
 pip install uv
 ```
@@ -145,6 +163,7 @@ source .venv/bin/activate
 # Install all packages using the provided command
 uv pip install torch torchvision torchaudio coqui-tts transformers streamlit sentencepiece moviepy psutil gputil ftfy "huggingface-hub[cli]" hf-transfer accelerate bitsandbytes pydantic --no-build-package llvmlite
 ```
+
 > **Note:** The `--no-build-package llvmlite` flag is included to prevent `uv` from trying to build the `llvmlite` package from source, which can fail without the proper LLVM toolchain. This forces it to use a pre-compiled wheel.
 
 ## Getting Started
@@ -158,16 +177,17 @@ streamlit run app.py
 Your web browser should automatically open to the application's UI.
 
 ### Workflow
+
 1.  **Create a New Project**: On the main page, fill out the "Create New Project" form.
-    *   **Generation Flow**: Choose between "Image to Video" (high quality) or "Text to Video" (fast).
-    *   **Model Selection**: Select your desired AI models from the dropdowns for each stage.
-    *   **Topic**: Enter the subject of your video.
-    *   **Settings**: Configure the video format, length, and number of scenes.
-    *   **Characters (Optional)**: If you select a model flow that supports character consistency, you can upload reference images for your subjects.
+    - **Generation Flow**: Choose between "Image to Video" (high quality) or "Text to Video" (fast).
+    - **Model Selection**: Select your desired AI models from the dropdowns for each stage.
+    - **Topic**: Enter the subject of your video.
+    - **Settings**: Configure the video format, length, and number of scenes.
+    - **Characters (Optional)**: If you select a model flow that supports character consistency, you can upload reference images for your subjects.
 2.  **Processing Dashboard**: After creating the project, you'll be taken to the dashboard.
-    *   **Automatic Mode**: Toggle "Automatic Mode" and click "Start" to have the pipeline run through all the steps automatically.
-    *   **Manual Control**: With automatic mode off, you can manually trigger each step (e.g., "Gen Audio", "Gen Image"). This is perfect for fine-tuning.
-    *   **Edit Everything**: Click into any text box to edit the script narration or visual prompts, then regenerate that specific part.
+    - **Automatic Mode**: Toggle "Automatic Mode" and click "Start" to have the pipeline run through all the steps automatically.
+    - **Manual Control**: With automatic mode off, you can manually trigger each step (e.g., "Gen Audio", "Gen Image"). This is perfect for fine-tuning.
+    - **Edit Everything**: Click into any text box to edit the script narration or visual prompts, then regenerate that specific part.
 3.  **Final Assembly**: Once all scenes and clips are generated, a button will appear to assemble the final video. Click it to view the finished product, complete with subtitles and synchronized audio.
 
 ---
@@ -179,11 +199,12 @@ The pipeline is designed for easy extension. To add a new AI model, you simply n
 **The Core Contract: `base_modules.py`**
 
 This file defines the interface for every module type:
-*   `BaseLLM`: For language models.
-*   `BaseTTS`: For text-to-speech models.
-*   `BaseT2I`: For text-to-image models.
-*   `BaseI2V`: For image-to-video models.
-*   `BaseT2V`: For text-to-video models.
+
+- `BaseLLM`: For language models.
+- `BaseTTS`: For text-to-speech models.
+- `BaseT2I`: For text-to-image models.
+- `BaseI2V`: For image-to-video models.
+- `BaseT2V`: For text-to-video models.
 
 ### Step-by-Step Guide to Adding a New I2V Model
 
@@ -318,6 +339,7 @@ from .i2v_motion_weaver import MotionWeaverI2V # <-- Add this line
 **That's it!** The next time you run `streamlit run app.py`, "MotionWeaver Pro (Smooth & Cinematic)" will appear as an option in the Image-to-Video Model dropdown.
 
 ## Directory Structure
+
 ```
 .
 ├── app.py                      # Main Streamlit web application
